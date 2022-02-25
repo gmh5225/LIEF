@@ -776,6 +776,7 @@ ok_error_t Parser::parse_sections() {
 
   stream_->setpos(shdr_offset);
   std::unordered_map<Section*, size_t> sections_names;
+  DataHandler::Handler& handler = *binary_->datahandler_;
   for (size_t i = 0; i < numberof_sections; ++i) {
     LIEF_DEBUG("  Elf_Shdr#{:02d}.offset: 0x{:x} ", i, stream_->pos());
     const auto shdr = stream_->read_conv<Elf_Shdr>();
@@ -787,20 +788,20 @@ ok_error_t Parser::parse_sections() {
     auto section = std::make_unique<Section>(*shdr);
     section->datahandler_ = binary_->datahandler_.get();
 
-    const uint64_t section_end = section->file_offset() + section->size();
+    const uint64_t section_start = section->file_offset();
+    const uint64_t section_end   = section_start + section->size();
     bool access_content = true;
-    if (section->file_offset() > stream_->size()) {
-      LIEF_ERR("  Section #{:d} file offset corrupted!", i);
+    if (section_start > stream_->size() || section_end > stream_->size()) {
       access_content = false;
+      if (section->type() != ELF_SECTION_TYPES::SHT_NOBITS) {
+        LIEF_WARN("Can't access the content of section #{}", i);
+      }
     }
 
-    if (section_end > stream_->size() + 200_MB) {
-      LIEF_ERR("  Section #{:d} is too large!", i);
-      access_content = false;
+    if (section->size() == 0 && section->file_offset() > 0 && access_content) {
+      // Even if the size is 0, it is worth creating the node
+      handler.create(section->file_offset(), 0, DataHandler::Node::SECTION);
     }
-
-    binary_->datahandler_->create(section->file_offset(), section->size(),
-                                  DataHandler::Node::SECTION);
 
     // Only if it contains data (with bits)
     if (section->size() > 0 && access_content) {
@@ -810,6 +811,9 @@ ok_error_t Parser::parse_sections() {
                   i, read_size, Parser::MAX_SECTION_SIZE);
         read_size = Parser::MAX_SECTION_SIZE;
       }
+
+      handler.create(section->file_offset(), read_size,
+                     DataHandler::Node::SECTION);
 
       const Elf_Off offset_to_content = section->file_offset();
       auto alloc = binary_->datahandler_->reserve(section->file_offset(), read_size);
@@ -885,11 +889,8 @@ ok_error_t Parser::parse_segments() {
 
     auto segment = std::make_unique<Segment>(*elf_phdr);
     segment->datahandler_ = binary_->datahandler_.get();
-    segment->datahandler_->create(segment->file_offset(), segment->physical_size(),
-                                  DataHandler::Node::SEGMENT);
 
-
-    if (segment->physical_size() > 0 && segment->physical_size() < Parser::MAX_SEGMENT_SIZE) {
+    if (0 < segment->physical_size() && segment->physical_size() < Parser::MAX_SEGMENT_SIZE) {
       uint64_t read_size = segment->physical_size();
       if (read_size > Parser::MAX_SEGMENT_SIZE) {
         LIEF_WARN("Segment #{} is {} bytes large. Only the first {} bytes will be taken into account",
@@ -902,6 +903,11 @@ ok_error_t Parser::parse_segments() {
                   i, read_size, stream_->size());
         read_size = stream_->size();
       }
+
+      segment->datahandler_->create(segment->file_offset(), read_size,
+                                    DataHandler::Node::SEGMENT);
+      segment->handler_size_ = read_size;
+
       if (segment->file_offset() > stream_->size() || (segment->file_offset() + read_size) > stream_->size()) {
         LIEF_WARN("Segment #{} has a corrupted file offset (0x{:x}) ", i, segment->file_offset());
         break;
@@ -934,6 +940,10 @@ ok_error_t Parser::parse_segments() {
           binary_->interpreter_ = *interpreter;
         }
       }
+    } else {
+      segment->handler_size_ = segment->physical_size();
+      segment->datahandler_->create(segment->file_offset(), segment->physical_size(),
+                                    DataHandler::Node::SEGMENT);
     }
 
     for (std::unique_ptr<Section>& section : binary_->sections_) {

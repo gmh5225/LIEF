@@ -183,7 +183,7 @@ result<std::string> BinaryStream::peek_string(size_t maxsize) const {
   size_t off = pos();
 
   if (!can_read<char>()) {
-    return str_result.c_str();
+    return str_result;
   }
 
   size_t count = 0;
@@ -346,16 +346,7 @@ result<std::string> BinaryStream::read_mutf8(size_t maxsize) const {
       }, '.');
 
   utf8::utf32to8(std::begin(u32str), std::end(u32str), std::back_inserter(u8str));
-
-  std::string u8str_clean;
-  for (const char c : u8str) {
-    if (c != -1) {
-      u8str_clean.push_back(c);
-    } else {
-      u8str_clean += "\\xFF";
-    }
-  }
-  return u8str_clean;
+  return u8str;
 }
 
 void BinaryStream::set_endian_swap(bool swap) {
