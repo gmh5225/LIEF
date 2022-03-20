@@ -803,7 +803,7 @@ inline result<uint32_t> name_table_value(BinaryStream& stream,
 ok_error_t Parser::parse_exports() {
   LIEF_DEBUG("== Parsing exports ==");
   static constexpr uint32_t NB_ENTRIES_LIMIT   = 0x1000000;
-  static constexpr size_t MAX_EXPORT_NAME_SIZE = 300;
+  static constexpr size_t MAX_EXPORT_NAME_SIZE = 3000; // Because of C++ mangling
 
   struct range_t {
     uint32_t start;
@@ -1019,7 +1019,7 @@ ok_error_t Parser::parse_signature() {
       LIEF_INFO("Can't read 0x{:x} bytes", length);
       break;
     }
-    ;
+
     if (auto sign = SignatureParser::parse(std::move(raw_signature))) {
       binary_->signatures_.push_back(std::move(*sign));
     } else {
@@ -1055,6 +1055,53 @@ ok_error_t Parser::parse_overlay() {
   return ok();
 }
 
+
+result<uint32_t> Parser::checksum() {
+  /*
+   * (re)compute the checksum specified in OptionalHeader::CheckSum
+   */
+  ScopedStream chk_stream(*stream_, 0);
+  const uint32_t padding = stream_->size() % sizeof(uint16_t);
+
+  LIEF_DEBUG("padding: {}", padding);
+
+  uint32_t partial_sum = 0;
+  const uint64_t file_length = stream_->size();
+  uint64_t nb_chunk = (file_length + 1) >> 1; // Number of uint16_t chunks
+
+  while (*stream_) {
+    uint16_t chunk = 0;
+    if (auto res = stream_->read<uint16_t>()) {
+      chunk = *res;
+    } else {
+      break;
+    }
+    --nb_chunk;
+    partial_sum += chunk;
+    partial_sum = (partial_sum >> 16) + (partial_sum & 0xffff);
+  }
+
+  if (nb_chunk > 0) {
+    if (auto res = stream_->read<uint8_t>()) {
+      partial_sum += *res;
+      partial_sum = (partial_sum >> 16) + (partial_sum & 0xffff);
+    }
+  }
+
+  auto partial_sum_res = static_cast<uint16_t>(((partial_sum >> 16) + partial_sum) & 0xffff);
+  uint32_t binary_checksum = binary_->optional_header().checksum();
+  uint32_t adjust_sum_lsb = binary_checksum & 0xFFFF;
+  uint32_t adjust_sum_msb = binary_checksum >> 16;
+
+  partial_sum_res -= (partial_sum_res < adjust_sum_lsb);
+  partial_sum_res -= adjust_sum_lsb;
+
+  partial_sum_res -= (partial_sum_res < adjust_sum_msb);
+  partial_sum_res -= adjust_sum_msb;
+
+  return static_cast<uint32_t>(partial_sum_res) + file_length;
+}
+
 //
 // Return the Binary constructed
 //
@@ -1085,11 +1132,11 @@ bool Parser::is_valid_import_name(const std::string& name) {
   if (name.empty() || name.size() > MAX_IMPORT_NAME_SIZE) {
     return false;
   }
-
-  if (!is_printable(name)) {
-    return false;
-  }
-  return true;
+  const bool valid_chars = std::all_of(std::begin(name), std::end(name),
+      [] (char c) {
+        return ::isprint(c);
+      });
+  return valid_chars;
 }
 
 

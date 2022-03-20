@@ -1370,28 +1370,28 @@ void Binary::patch_address(uint64_t address, uint64_t patch_value, size_t size, 
     switch (size) {
       case sizeof(uint8_t):
         {
-          const auto X = static_cast<const uint8_t>(patch_value);
+          auto X = static_cast<uint8_t>(patch_value);
           memcpy(content.data() + offset, &X, sizeof(uint8_t));
           break;
         }
 
       case sizeof(uint16_t):
         {
-          const auto X = static_cast<const uint16_t>(patch_value);
+          auto X = static_cast<uint16_t>(patch_value);
           memcpy(content.data() + offset, &X, sizeof(uint16_t));
           break;
         }
 
       case sizeof(uint32_t):
         {
-          const auto X = static_cast<const uint32_t>(patch_value);
+          auto X = static_cast<uint32_t>(patch_value);
           memcpy(content.data() + offset, &X, sizeof(uint32_t));
           break;
         }
 
       case sizeof(uint64_t):
         {
-          const auto X = static_cast<const uint64_t>(patch_value);
+          auto X = static_cast<uint64_t>(patch_value);
           memcpy(content.data() + offset, &X, sizeof(uint64_t));
           break;
         }
@@ -2774,6 +2774,7 @@ uint64_t Binary::relocate_phdr_table_pie() {
 uint64_t Binary::relocate_phdr_table_v2() {
   static constexpr size_t USER_SEGMENTS = 10; // We reserve space for 10 user's segments
 
+
   if (phdr_reloc_info_.new_offset > 0) {
     return phdr_reloc_info_.new_offset;
   }
@@ -2781,7 +2782,8 @@ uint64_t Binary::relocate_phdr_table_v2() {
   Header& header = this->header();
 
   const uint64_t phdr_size = type() == ELF_CLASS::ELFCLASS32 ?
-                                       sizeof(details::ELF32::Elf_Phdr) : sizeof(details::ELF64::Elf_Phdr);
+                                       sizeof(details::ELF32::Elf_Phdr) :
+                                       sizeof(details::ELF64::Elf_Phdr);
 
 
   std::vector<Segment*> load_seg;
@@ -2805,13 +2807,69 @@ uint64_t Binary::relocate_phdr_table_v2() {
   // "expand" the .bss area. It is required since the bss area that is mapped
   // needs to be set to 0
   const uint64_t original_psize = bss_segment->physical_size();
-  const uint64_t new_phdr_offset = bss_segment->file_offset() + bss_segment->virtual_size();
-  phdr_reloc_info_.new_offset = new_phdr_offset;
 
+  /*
+   * To compute the location of the new segments table,
+   * we have to deal with some constraints:
+   * 1. The new location virtual address (VA) must follow:
+   *    VA = image_base + offset (1)
+   * 2. The .bss area, which does not have a physical
+   *    representation in the file, must be 0. Therefore,
+   *    we can't use this space to put our new segment table.
+   *    Consequently, we need to expand it in the file. (2)
+   * 3. The req 2. is not enough and need to verify that the virtual address
+   *    is suitable.
+   *
+   * Let's consider this layout:
+   *  LOAD_1 0x000000 0x0000000000400000 0x000be4 0x000be4
+   *  LOAD_2 0x000e00 0x0000000000401e00 0x000230 0x000238
+   * We have to relocate the PHDR at the end of the file.
+   * Because of Req[2.], we have to expand the last LOAD bss-like segment:
+   *  LOAD_2.file_size = LOAD_2.virtual_size = 0x000230
+   * So our new segment table **could** be located at:
+   *  LOAD_2.file_offset + LOAD_2.file_size == 0x1030
+   * Because of Req[1.] it would set the virtual address:
+   *  Imagebase[0x400000] + 0x1030 = 0x401030
+   * BUT if the size of the new segment table is too large,
+   * it could override the next virtual address which is associated with LOAD_2.
+   *  LOAD_NEW.VA = 0x401030 < LOAD_2.VA = 0x401e00
+   *  Moreover, it might raise page alignment issues.
+   *
+   * Therefore, we **can't take** 0x1030 as offset for the new
+   * segment table.
+   * To avoid virtual overlap while still keeping Req[1.],
+   * we need to use: LOAD_2.virtual_address - Imagebase[0x400000] + LOAD_2.virtual_size
+   *                 \                                         /
+   *                  ------------ Offset --------------------/
+   * which should be aligned on a page size to avoid error.
+   *
+   * The issue https://github.com/lief-project/LIEF/issues/671
+   * is a good example of what could go wrong.
+   *
+   * |WARNING|
+   *  This modification can increase the binary size drastically
+   *  if it contains a large BSS section.
+   *
+   * (1) This is enforced by the Linux loader which uses
+   *     this relationship to compute the module base address
+   * (2) man elf:
+   *     .bss This section holds uninitialized data that contributes to
+   *          the program's memory image. By definition, the system
+   *          initializes the data with zeros when the program begins to
+   *          run.  This section is of type SHT_NOBITS. The attribute
+   *          types are SHF_ALLOC and SHF_WRITE.
+   */
+  const uint64_t new_phdr_offset = align(bss_segment->virtual_address() - imagebase()
+                                         + bss_segment->virtual_size(), 0x1000);
+
+  const size_t nb_segments = header.numberof_segments() +
+                             /* custom PT_LOAD */ 1 + USER_SEGMENTS;
+
+  const uint64_t new_phdr_size = nb_segments * phdr_size;
+  phdr_reloc_info_.new_offset = new_phdr_offset;
   header.program_headers_offset(new_phdr_offset);
 
   size_t delta_pa = (bss_segment->virtual_size() - bss_segment->physical_size());
-  const size_t nb_segments = header.numberof_segments() + /* custom PT_LOAD */ 1 + USER_SEGMENTS;
 
   phdr_reloc_info_.nb_segments = USER_SEGMENTS;
   auto alloc = datahandler_->make_hole(bss_segment->file_offset() + bss_segment->physical_size(), delta_pa);
@@ -2821,11 +2879,12 @@ uint64_t Binary::relocate_phdr_table_v2() {
   }
   bss_segment->physical_size(bss_segment->virtual_size());
 
+  // Create a LOAD segment that wraps the new location of the PT_PHDR.
   auto new_segment_ptr = std::make_unique<Segment>();
   Segment* nsegment_addr = new_segment_ptr.get();
   nsegment_addr->type(SEGMENT_TYPES::PT_LOAD);
-  nsegment_addr->virtual_size(nb_segments * phdr_size);
-  nsegment_addr->physical_size(nb_segments * phdr_size);
+  nsegment_addr->virtual_size(new_phdr_size);
+  nsegment_addr->physical_size(new_phdr_size);
   nsegment_addr->virtual_address(imagebase() + phdr_reloc_info_.new_offset);
   nsegment_addr->physical_address(imagebase() + phdr_reloc_info_.new_offset);
   nsegment_addr->flags(ELF_SEGMENT_FLAGS::PF_R);
@@ -2833,7 +2892,7 @@ uint64_t Binary::relocate_phdr_table_v2() {
   nsegment_addr->file_offset(phdr_reloc_info_.new_offset);
   nsegment_addr->datahandler_ = datahandler_.get();
 
-  DataHandler::Node new_node{phdr_reloc_info_.new_offset, nb_segments * phdr_size,
+  DataHandler::Node new_node{phdr_reloc_info_.new_offset, new_phdr_size,
                              DataHandler::Node::SEGMENT};
 
   datahandler_->add(new_node);
@@ -2899,7 +2958,8 @@ uint64_t Binary::relocate_phdr_table_v1() {
   Header& header = this->header();
 
   const uint64_t phdr_size = type() == ELF_CLASS::ELFCLASS32 ?
-                                       sizeof(details::ELF32::Elf_Phdr) : sizeof(details::ELF64::Elf_Phdr);
+                                       sizeof(details::ELF32::Elf_Phdr) :
+                                       sizeof(details::ELF64::Elf_Phdr);
 
   const auto it_segment_phdr = std::find_if(std::begin(segments_), std::end(segments_),
               [] (const std::unique_ptr<Segment>& s) {
@@ -2918,7 +2978,13 @@ uint64_t Binary::relocate_phdr_table_v1() {
   Segment* next_to_extend = nullptr;
   size_t potential_size = 0;
   const size_t nb_loads = load_seg.size();
-  for (size_t i = 0; i < nb_loads; ++i) {
+
+  // This function requires to have at least 2 segments
+  if (nb_loads == 1) {
+    return 0;
+  }
+
+  for (size_t i = 0; i < (nb_loads - 1); ++i) {
     Segment* current = load_seg[i];
     // Skip bss-like segments
     if (current->virtual_size() != current->physical_size()) {
@@ -2926,20 +2992,15 @@ uint64_t Binary::relocate_phdr_table_v1() {
                  to_string(current->type()), current->virtual_address(), current->virtual_size());
       continue;
     }
-    if (i < nb_loads - 1) {
-      Segment* adjacent = load_seg[i + 1];
-      const size_t gap = adjacent->file_offset() - (current->file_offset() + current->physical_size());
-      const size_t nb_seg_gap = gap / phdr_size;
-      LIEF_DEBUG("Gap between {:d} <-> {:d}: {:x} ({:d} segments)", i, i + 1, gap, nb_seg_gap);
-      if (nb_seg_gap > potential_size) {
-        seg_to_extend = current;
-        next_to_extend = adjacent;
-        potential_size = nb_seg_gap;
-      }
-      continue;
+    Segment* adjacent = load_seg[i + 1];
+    const size_t gap = adjacent->file_offset() - (current->file_offset() + current->physical_size());
+    const size_t nb_seg_gap = gap / phdr_size;
+    LIEF_DEBUG("Gap between {:d} <-> {:d}: {:x} ({:d} segments)", i, i + 1, gap, nb_seg_gap);
+    if (nb_seg_gap > potential_size) {
+      seg_to_extend  = current;
+      next_to_extend = adjacent;
+      potential_size = nb_seg_gap;
     }
-    // i == nb_loads - 1 => Last segment
-    return 0;
   }
 
   if (seg_to_extend == nullptr || next_to_extend == nullptr) {
@@ -2947,22 +3008,19 @@ uint64_t Binary::relocate_phdr_table_v1() {
     return 0;
   }
 
-  if (potential_size < MIN_POTENTIAL_SIZE) {
+  if (potential_size < (header.numberof_segments() + MIN_POTENTIAL_SIZE)) {
     LIEF_DEBUG("The number of available segments is too small ({} vs {})",
-               potential_size, MIN_POTENTIAL_SIZE);
+               potential_size, header.numberof_segments() + MIN_POTENTIAL_SIZE);
     return 0;
   }
 
   LIEF_DEBUG("Segment selected for the extension: {}@0x{:x}:0x{:x}",
-      to_string(seg_to_extend->type()), seg_to_extend->virtual_address(), seg_to_extend->virtual_size());
+             to_string(seg_to_extend->type()), seg_to_extend->virtual_address(),
+             seg_to_extend->virtual_size());
+
   LIEF_DEBUG("Adjacent segment selected for the extension: {}@0x{:x}:0x{:x}",
-      to_string(next_to_extend->type()), next_to_extend->virtual_address(), next_to_extend->virtual_size());
-
-  // New values
-  const uint64_t new_phdr_offset = seg_to_extend->file_offset() + seg_to_extend->physical_size();
-  phdr_reloc_info_.new_offset = new_phdr_offset;
-
-  header.program_headers_offset(new_phdr_offset);
+             to_string(next_to_extend->type()), next_to_extend->virtual_address(),
+             next_to_extend->virtual_size());
 
   // Extend the segment that wraps the next PHDR table so that it is contiguous
   // with the next segment.
@@ -2975,6 +3033,15 @@ uint64_t Binary::relocate_phdr_table_v1() {
     phdr_reloc_info_.clear();
     return 0;
   }
+
+
+  // New values
+  const uint64_t new_phdr_offset = seg_to_extend->file_offset() + seg_to_extend->physical_size();
+  phdr_reloc_info_.new_offset = new_phdr_offset;
+
+  header.program_headers_offset(new_phdr_offset);
+
+
   phdr_reloc_info_.nb_segments = nb_segments;
   seg_to_extend->physical_size(seg_to_extend->physical_size() + delta);
   seg_to_extend->virtual_size(seg_to_extend->virtual_size() + delta);
@@ -2990,7 +3057,9 @@ uint64_t Binary::relocate_phdr_table_v1() {
     LIEF_DEBUG("{}@0x{:x}:0x{:x}", to_string(phdr_segment->type()),
                                    phdr_segment->virtual_address(), phdr_segment->virtual_size());
     // Clear PHDR segment
-    phdr_segment->content(std::vector<uint8_t>(phdr_segment->physical_size(), 0));
+    phdr_segment->physical_size(delta);
+    phdr_segment->virtual_size(delta);
+    phdr_segment->content(std::vector<uint8_t>(delta, 0));
   }
   return phdr_reloc_info_.new_offset;
 }
