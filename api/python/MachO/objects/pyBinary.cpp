@@ -424,7 +424,7 @@ void create<Binary>(py::module& m) {
         "address"_a)
 
     .def("write",
-        &Binary::write,
+        static_cast<void (Binary::*)(const std::string&)>(&Binary::write),
         "Rebuild the binary and write and write its content if the file given in parameter",
         "output"_a,
         py::return_value_policy::reference_internal)
@@ -474,6 +474,19 @@ void create<Binary>(py::module& m) {
         static_cast<bool (Binary::*)(size_t)>(&Binary::remove_command),
         "Remove the " RST_CLASS_REF(lief.MachO.LoadCommand) " at the given ``index``",
         "index"_a)
+
+    .def("remove_section",
+        static_cast<void (Binary::*)(const std::string&, bool)>(&Binary::remove_section),
+        "Remove the section with the given name",
+        "name"_a, "clear"_a = false)
+
+    .def("remove_section",
+        py::overload_cast<const std::string&, const std::string&, bool>(&Binary::remove_section),
+        R"delim(
+        Remove the section from the segment with the name
+        given in the first parameter and with the section's name provided in the
+        second parameter.)delim",
+        "segname"_a, "secname"_a, "clear"_a = false)
 
     .def("remove_signature",
         static_cast<bool (Binary::*)(void)>(&Binary::remove_signature),
@@ -571,7 +584,9 @@ void create<Binary>(py::module& m) {
         py::return_value_policy::reference_internal)
 
     .def("shift",
-         &Binary::shift,
+         [] (Binary& self, size_t width) {
+           return error_or(&Binary::shift, self, width);
+         },
          R"delim(
          Shift the content located right after the Load commands table.
          This operation can be used to add a new command
@@ -596,6 +611,10 @@ void create<Binary>(py::module& m) {
         "Add a new a new symbol in the LC_SYMTAB",
         "address"_a, "name"_a,
         py::return_value_policy::reference)
+
+    .def_property_readonly("page_size",
+        &Binary::page_size,
+        "Return the binary's page size")
 
     .def("__getitem__",
         static_cast<LoadCommand* (Binary::*)(LOAD_COMMAND_TYPES)>(&Binary::operator[]),

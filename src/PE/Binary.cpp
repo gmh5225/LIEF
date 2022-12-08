@@ -157,8 +157,10 @@ Binary::Binary(const std::string& name, PE_TYPE type) :
   optional_header().sizeof_image(virtual_size());
 }
 
-void Binary::write(const std::string& filename) {
-  Builder builder{*this};
+template<typename T>
+static void write_impl(Binary& binary, T&& dest)
+{
+  Builder builder{binary};
 
   builder.
     build_imports(false).
@@ -168,7 +170,15 @@ void Binary::write(const std::string& filename) {
     build_resources(true);
 
   builder.build();
-  builder.write(filename);
+  builder.write(dest);
+}
+
+void Binary::write(const std::string& filename) {
+  write_impl(*this, filename);
+}
+
+void Binary::write(std::ostream& os) {
+  write_impl(*this, os);
 }
 
 TLS& Binary::tls() {
@@ -614,7 +624,7 @@ Section* Binary::add_section(const Section& section, PE_SECTION_TYPES type) {
 
   // Compute new section offset
   uint64_t new_section_offset = align(std::accumulate(
-      std::begin(sections_), std::end(sections_), sizeof_headers(),
+      std::begin(sections_), std::end(sections_), static_cast<uint64_t>(sizeof_headers()),
       [] (uint64_t offset, const std::unique_ptr<Section>& s) {
         return std::max<uint64_t>(s->pointerto_raw_data() + s->sizeof_raw_data(), offset);
       }), optional_header().file_alignment());
@@ -623,11 +633,12 @@ Section* Binary::add_section(const Section& section, PE_SECTION_TYPES type) {
 
 
   // Compute new section Virtual address
+  const uint64_t section_align = static_cast<uint64_t>(optional_header().section_alignment());
   const uint64_t new_section_va = align(std::accumulate(
-      std::begin(sections_), std::end(sections_), optional_header().section_alignment(),
+      std::begin(sections_), std::end(sections_), section_align,
       [] (uint64_t va, const std::unique_ptr<Section>& s) {
         return std::max<uint64_t>(s->virtual_address() + s->virtual_size(), va);
-      }), optional_header().section_alignment());
+      }), section_align);
 
   LIEF_DEBUG("New section VA: 0x{:x}", new_section_va);
 
@@ -865,12 +876,13 @@ uint32_t Binary::predict_function_rva(const std::string& library, const std::str
 
 
   // We assume the the idata section will be the last section
+  const uint64_t section_align = static_cast<uint64_t>(optional_header().section_alignment());
   const uint64_t next_virtual_address = align(std::accumulate(
       std::begin(sections_),
-      std::end(sections_), optional_header().section_alignment(),
+      std::end(sections_), section_align,
       [] (uint64_t va, const std::unique_ptr<Section>& s) {
         return std::max<uint64_t>(s->virtual_address() + s->virtual_size(), va);
-      }), optional_header().section_alignment());
+      }), section_align);
 
   return next_virtual_address + address;
 }
@@ -1449,7 +1461,12 @@ std::vector<uint8_t> Binary::get_content_from_virtual_address(uint64_t virtual_a
   const uint64_t offset = rva - section->virtual_address();
   uint64_t checked_size = size;
   if ((offset + checked_size) > content.size()) {
-    checked_size = checked_size - (offset + checked_size - content.size());
+    uint64_t delta_off = offset + checked_size - content.size();
+    if (checked_size < delta_off) {
+        LIEF_ERR("Can't access section data due to a section end overflow.");
+        return {};
+    }
+    checked_size = checked_size - delta_off;
   }
 
   return {content.data() + offset, content.data() + offset + checked_size};
@@ -1467,22 +1484,22 @@ bool Binary::has_nx() const {
 // Overlay
 // =======
 
-const std::vector<uint8_t>& Binary::overlay() const {
+span<const uint8_t> Binary::overlay() const {
   return overlay_;
 }
 
-std::vector<uint8_t>& Binary::overlay() {
+span<uint8_t> Binary::overlay() {
   return overlay_;
 }
 
 // Dos stub
 // ========
 
-const std::vector<uint8_t>& Binary::dos_stub() const {
+span<const uint8_t> Binary::dos_stub() const {
   return dos_stub_;
 }
 
-std::vector<uint8_t>& Binary::dos_stub() {
+span<uint8_t> Binary::dos_stub() {
   return dos_stub_;
 }
 
@@ -1728,7 +1745,7 @@ std::ostream& Binary::print(std::ostream& os) const {
   if (has_debug()) {
     os << "Debug" << std::endl;
     os << "=====" << std::endl;
-    for (const Debug& debug : debug()) {
+    for (const Debug& debug : this->debug()) {
       os << debug << std::endl;
     }
     os << std::endl;

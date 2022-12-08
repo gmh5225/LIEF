@@ -6,6 +6,14 @@ Changelog
 
 :ELF:
 
+  * Fix coredump parsing issue (c.f. :issue:`830` found by :github_user:`Lan1keA`)
+  * Fix and (re)enable removing dynamic symbols (c.f. :issue:`828`)
+  * Add support for `NT_GNU_BUILD_ATTRIBUTE_OPEN` and `NT_GNU_BUILD_ATTRIBUTE_FUNC` (c.f. :issue:`816`)
+  * [CVE-2022-38497] Fix ELF core parsing issue (:issue:`766` found by :github_user:`CCWANG19`)
+  * [CVE-2022-38306] Fix a heap overflow found by :github_user:`CCWANG19` (:issue:`763`)
+  * :github_user:`aeflores` fixed an issue when there are multiple versions associated with a symbol
+    (see: :issue:`749` for the details).
+  * Handle binaries compiled with the `-static-pie` flag correctly (see: :issue:`747`)
   * Add support for modifying section-less binaries. The ELF :class:`~lief.ELF.Section` objects gain
     the :meth:`lief.ELF.Section.as_frame` method which defines the section as a *framed* section.
 
@@ -27,6 +35,11 @@ Changelog
 
 :MachO:
 
+  * Add support for parsing Mach-O in memory
+  * Fix a memory issue (found by :github_user:`bladchan` via :issue:`806`)
+  * [CVE-2022-40923] Fix parsing issue (:issue:`784` found by :github_user:`bladchan`)
+  * [CVE-2022-40922] Fix parsing issue (:issue:`781` found by :github_user:`bladchan`)
+  * [CVE-2022-38307] Fix a segfault when the Mach-O binary does not have segments (found by :github_user:`CCWANG19` via :issue:`764`)
   * Enable to create exports
   * Fix the layout of the binaries modified by LIEF such as they can be (re)signed.
   * Add support for `LC_DYLD_CHAINED_FIXUPS` and `LC_DYLD_EXPORTS_TRIE`
@@ -39,9 +52,58 @@ Changelog
 
       sec = bin.get_section("__DATA", "__objc_metadata")
 
+  * Add API to remove a :class:`~lief.MachO.Section` from a specified segment's name and section's name.
+
+  :Example:
+
+    .. code-block:: python
+
+      sec = bin.remove_section("__DATA", "__objc_metadata")
+
+  * Add :attr:`lief.MachO.Binary.page_size`
+
+:PE:
+
+  * The Python API now returns `bytes` objects instead of `List[int]`
+  * Remove :meth:`lief.PE.ResourceNode.sort_by_id`
+  * Fix the ordering of childs of :class:`~lief.PE.ResourceNode`
+
+:DEX:
+
+  * Fix multiple parsing issues raised by :github_user:`bladchan`
+
+:Other:
+
+  * [CVE-2022-38497]: :issue:`765` found by :github_user:`CCWANG19`
+  * [CVE-2022-38495]: :issue:`767` found by :github_user:`CCWANG19`
+
 :General Design:
 
+  * :github_user:`ZehMatt` added the support to write LIEF binaries object through a `std::ostream` interface
+    (:commit:`9d55f538602989c69454639565910884c5c5ac7c`)
   * Remove the exceptions
+
+
+:Dependencies:
+
+  * Move to `Pybind11 - 2.10.1 <https://pybind11.readthedocs.io/en/stable/changelog.html#version-2-10-1-oct-31-2022>`_
+  * Move to nlohmann/json 3.11.2
+  * Move to MbedTLS 3.2.1
+  * Move to utfcpp 3.2.1
+
+
+
+0.12.3 - November 1, 2022
+-------------------------
+
+This release contains several security fixes:
+
+  * [CVE-2022-38497] Fix ELF core parsing issue (:issue:`766` found by :github_user:`CCWANG19`)
+  * [CVE-2022-38306] Fix a heap overflow found by :github_user:`CCWANG19` (:issue:`763`)
+  * Fix a memory issue (found by :github_user:`bladchan` via :issue:`806`)
+  * [CVE-2022-40923] Fix parsing issue (:issue:`784` found by :github_user:`bladchan`)
+  * [CVE-2022-40922] Fix parsing issue (:issue:`781` found by :github_user:`bladchan`)
+  * [CVE-2022-38307] Fix a segfault when the Mach-O binary does not have segments (found by :github_user:`CCWANG19` via :issue:`764`)
 
 
 0.12.1 - April 08, 2022

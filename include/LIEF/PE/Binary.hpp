@@ -362,12 +362,12 @@ class LIEF_API Binary : public LIEF::Binary {
   LoadConfiguration* load_configuration();
 
   //! Return the overlay content
-  const std::vector<uint8_t>& overlay() const;
-  std::vector<uint8_t>&       overlay();
+  span<const uint8_t> overlay() const;
+  span<uint8_t>       overlay();
 
   //! Return the DOS stub content
-  const std::vector<uint8_t>& dos_stub() const;
-  std::vector<uint8_t>&       dos_stub();
+  span<const uint8_t> dos_stub() const;
+  span<uint8_t>       dos_stub();
 
   //! Update the DOS stub content
   void dos_stub(const std::vector<uint8_t>& content);
@@ -448,11 +448,17 @@ class LIEF_API Binary : public LIEF::Binary {
   // @deprecated This function will be removed in a future version of LIEF
   void hook_function(const std::string& library, const std::string& function, uint64_t address);
 
-  //! Reconstruct the binary object and write the raw PE in  `filename`
+  //! Reconstruct the binary object and write the raw PE in `filename`
   //!
   //! Rebuild a PE binary from the current Binary object.
   //! When rebuilding, import table and relocations are not rebuilt.
   void write(const std::string& filename) override;
+
+  //! Reconstruct the binary object and write the raw PE in `os` stream
+  //!
+  //! Rebuild a PE binary from the current Binary object.
+  //! When rebuilding, import table and relocations are not rebuilt.
+  void write(std::ostream& os) override;
 
   void accept(Visitor& visitor) const override;
 

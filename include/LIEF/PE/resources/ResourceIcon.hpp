@@ -17,9 +17,11 @@
 #define LIEF_PE_RESOURCE_ICON_H_
 #include <iostream>
 #include <sstream>
+#include <climits>
 
 #include "LIEF/visibility.h"
 
+#include "LIEF/span.hpp"
 #include "LIEF/Object.hpp"
 
 #include "LIEF/PE/enums.hpp"
@@ -78,7 +80,7 @@ class LIEF_API ResourceIcon : public Object {
   uint32_t size() const;
 
   //! Pixels of the image (as bytes)
-  const std::vector<uint8_t>& pixels() const;
+  span<const uint8_t> pixels() const;
 
   void id(uint32_t id);
   void lang(RESOURCE_LANGS lang);
@@ -110,7 +112,7 @@ class LIEF_API ResourceIcon : public Object {
   uint8_t              reserved_ = 0;
   uint16_t             planes_ = 0;
   uint16_t             bit_count_ = 0;
-  uint32_t             id_ = -1u;
+  uint32_t             id_ = UINT_MAX;
   RESOURCE_LANGS       lang_ = RESOURCE_LANGS::LANG_NEUTRAL;
   RESOURCE_SUBLANGS    sublang_ = RESOURCE_SUBLANGS::SUBLANG_DEFAULT;
   std::vector<uint8_t> pixels_;

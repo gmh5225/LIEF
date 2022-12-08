@@ -35,7 +35,7 @@ Imported and exported functions are abstracted by LIEF thus you can iterate over
 
 
 When analyzing a binary, imported function names are very helpful for the reverse engineering. One solution is to link statically the binary and the library.
-Another solution is to blow mind the reverser's mind by swapping these symbols.
+Another solution is to blow the reverser's mind by swapping these symbols. This is what we're going to do.
 
 Take a look at the following code:
 
@@ -66,7 +66,7 @@ Basically, this program takes an integer as argument and performs some computati
 
 .. code-block:: console
 
-  $ hasme 123
+  $ hashme 123
   228886645.836282
 
 .. image:: ../_static/tutorial/03/hashme.png
@@ -86,7 +86,7 @@ First we have to load both the library and the binary:
   import lief
 
 
-  hasme = lief.parse("hasme")
+  hashme = lief.parse("hashme")
   libm  = lief.parse("/usr/lib/libm.so.6")
 
 Then when change the name of the two imported functions in the **binary**:
@@ -109,7 +109,7 @@ finally we swap ``log`` with ``sin`` and ``pow`` with ``cos`` in the **library**
   import lief
 
 
-  hasme = lief.parse("hasme")
+  hashme = lief.parse("hashme")
   libm  = lief.parse("/usr/lib/libm.so.6")
 
 

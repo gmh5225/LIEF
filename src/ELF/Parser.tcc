@@ -277,13 +277,7 @@ ok_error_t Parser::parse_binary() {
     if (segment.type() != SEGMENT_TYPES::PT_NOTE) {
       continue;
     }
-
-    const uint64_t va = segment.virtual_address();
-    if (auto res = binary_->virtual_address_to_offset(va)) {
-      parse_notes(*res, segment.physical_size());
-    } else {
-      LIEF_WARN("Can't convert PT_NOTE.virtual_address into an offset (0x{:x})", va);
-    }
+    parse_notes(segment.file_offset(), segment.physical_size());
   }
 
   // Parse Note Sections
@@ -292,7 +286,7 @@ ok_error_t Parser::parse_binary() {
     if (section.type() != ELF_SECTION_TYPES::SHT_NOTE) {
       continue;
     }
-
+    LIEF_DEBUG("Notes from section: {}", section.name());
     parse_notes(section.offset(), section.size());
   }
 
@@ -722,7 +716,7 @@ ok_error_t Parser::parse_sections() {
   LIEF_DEBUG("Parsing Section");
 
   const Elf_Off shdr_offset = binary_->header_.section_headers_offset();
-  const auto numberof_sections = std::min<uint32_t>(binary_->header_.numberof_sections(), Parser::NB_MAX_SECTION);
+  const auto numberof_sections = binary_->header_.numberof_sections();
 
   stream_->setpos(shdr_offset);
   std::unordered_map<Section*, size_t> sections_names;
@@ -1526,7 +1520,7 @@ ok_error_t Parser::parse_symbol_version_definition(uint64_t offset, uint32_t nb_
     for (std::unique_ptr<SymbolVersionAux>& sva : svd->symbol_version_aux_) {
       binary_->sizing_info_->verdef += sizeof(Elf_Verdaux);
       for (std::unique_ptr<SymbolVersion>& sv : binary_->symbol_version_table_) {
-        if (svd->ndx() > 1 && (sv->value() & 0x7FFF) == svd->ndx()) {
+        if (svd->ndx() > 1 && (sv->value() & 0x7FFF) == svd->ndx() && !sv->symbol_aux_) {
           sv->symbol_aux_ = sva.get();
         }
       }

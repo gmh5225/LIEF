@@ -132,13 +132,9 @@ ok_error_t Parser::parse_dos_stub() {
 
 ok_error_t Parser::parse_rich_header() {
   LIEF_DEBUG("Parsing rich header");
-  const std::vector<uint8_t>& dos_stub = binary_->dos_stub();
-  //SpanStream stream;
-  auto res = SpanStream::from_vector(dos_stub);
-  if (!res) {
-    return make_error_code(lief_errors::parsing_error);
-  }
-  SpanStream stream = std::move(*res);
+  span<const uint8_t> dos_stub = binary_->dos_stub();
+
+  SpanStream stream(dos_stub);
 
   const auto it_rich = std::search(std::begin(dos_stub), std::end(dos_stub),
                                    std::begin(details::Rich_Magic), std::end(details::Rich_Magic));
@@ -220,7 +216,7 @@ ok_error_t Parser::parse_sections() {
   const uint32_t opt_header_off  = pe_header_off + sizeof(details::pe_header);
   const uint32_t sections_offset = opt_header_off + binary_->header().sizeof_optional_header();
 
-  uint32_t first_section_offset = -1u;
+  uint32_t first_section_offset = UINT_MAX;
 
   uint32_t numberof_sections = binary_->header().numberof_sections();
   if (numberof_sections > NB_MAX_SECTIONS) {
@@ -803,7 +799,7 @@ inline result<uint32_t> name_table_value(BinaryStream& stream,
 ok_error_t Parser::parse_exports() {
   LIEF_DEBUG("== Parsing exports ==");
   static constexpr uint32_t NB_ENTRIES_LIMIT   = 0x1000000;
-  static constexpr size_t MAX_EXPORT_NAME_SIZE = 3000; // Because of C++ mangling
+  static constexpr size_t MAX_EXPORT_NAME_SIZE = 4096; // Because of C++ mangling
 
   struct range_t {
     uint32_t start;
@@ -1044,7 +1040,7 @@ ok_error_t Parser::parse_signature() {
 ok_error_t Parser::parse_overlay() {
   LIEF_DEBUG("== Parsing Overlay ==");
   const uint64_t last_section_offset = std::accumulate(
-      std::begin(binary_->sections_), std::end(binary_->sections_), 0,
+      std::begin(binary_->sections_), std::end(binary_->sections_), uint64_t{ 0u },
       [] (uint64_t offset, const std::unique_ptr<Section>& section) {
         return std::max<uint64_t>(section->offset() + section->size(), offset);
       });

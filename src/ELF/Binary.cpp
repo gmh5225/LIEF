@@ -70,6 +70,16 @@
 namespace LIEF {
 namespace ELF {
 
+
+inline size_t get_relocation_sizeof(const Binary& bin, const Relocation& R) {
+  const bool is64    = (bin.type() == ELF_CLASS::ELFCLASS64);
+  const bool is_rela = R.is_rela();
+
+  return is64 ?
+         (is_rela ? sizeof(details::Elf64_Rela) : sizeof(details::Elf64_Rel)) :
+         (is_rela ? sizeof(details::Elf32_Rela) : sizeof(details::Elf32_Rel));
+}
+
 Binary::Binary() :
   sizing_info_{std::make_unique<sizing_info_t>()}
 {
@@ -695,7 +705,6 @@ void Binary::remove_dynamic_symbol(Symbol* symbol) {
     return;
   }
 
-
   // Update relocations
   auto it_relocation = std::find_if(std::begin(relocations_), std::end(relocations_),
       [symbol] (const std::unique_ptr<Relocation>& relocation) {
@@ -704,9 +713,32 @@ void Binary::remove_dynamic_symbol(Symbol* symbol) {
       });
 
   if (it_relocation != std::end(relocations_)) {
-    relocations_.erase(it_relocation);
+    Relocation& R = **it_relocation;
+    /* That's the tricky part:
+     *
+     * If we remove the JUMP_SLOT relocation associated with the symbols,
+     * it will break the lazy resolution process.
+     *
+     * Let's consider the following relocations:
+     * [0] 0201018 R_X86_64_JUMP_SLO puts
+     * [1] 0201020 R_X86_64_JUMP_SLO printf
+     *
+     * Which are associated with these resolving stubs:
+     *
+     * push    0 // Index of puts in the relocations table
+     * jmp     <resolver>
+     *
+     * push    1 // Index of printf in the relocation table
+     * jmp     <resolver>
+     *
+     * If we remove 'puts' from the relocation table, 'printf' is shifted
+     * to the index 0 and the index in the resolving stub is corrupted (push 1).
+     * Thus for the general case, we can't "shrink" the relocation table.
+     * Instead, unbinding the 'symbol' from the relocation does not break the layout
+     * while still removing the symbol.
+     */
+    R.symbol(nullptr);
   }
-
 
   it_relocation = std::find_if(std::begin(relocations_), std::end(relocations_),
       [symbol] (const std::unique_ptr<Relocation>& relocation) {
@@ -715,6 +747,19 @@ void Binary::remove_dynamic_symbol(Symbol* symbol) {
       });
 
   if (it_relocation != std::end(relocations_)) {
+    const size_t rel_sizeof = get_relocation_sizeof(*this, **it_relocation);
+    if (auto* DT = get(DYNAMIC_TAGS::DT_RELASZ)) {
+      const uint64_t sizes = DT->value();
+      if (sizes >= rel_sizeof) {
+        DT->value(sizes - rel_sizeof);
+      }
+    }
+    else if (auto* DT = get(DYNAMIC_TAGS::DT_RELSZ)) {
+      const uint64_t sizes = DT->value();
+      if (sizes >= rel_sizeof) {
+        DT->value(sizes - rel_sizeof);
+      }
+    }
     relocations_.erase(it_relocation);
   }
 
@@ -812,23 +857,7 @@ Relocation& Binary::add_pltgot_relocation(const Relocation& relocation) {
   }
 
   // Update the Dynamic Section
-  const bool is_rela = relocation.is_rela();
-  const bool is64    = (type() == ELF_CLASS::ELFCLASS64);
-
-  size_t reloc_size = 0;
-  if (is_rela) {
-    if (is64) {
-      reloc_size = sizeof(details::Elf64_Rela);
-    } else {
-      reloc_size = sizeof(details::Elf32_Rela);
-    }
-  } else {
-    if (is64) {
-      reloc_size = sizeof(details::Elf64_Rel);
-    } else {
-      reloc_size = sizeof(details::Elf32_Rel);
-    }
-  }
+  size_t reloc_size = get_relocation_sizeof(*this, relocation);
 
   DynamicEntry* dt_sz = get(DYNAMIC_TAGS::DT_PLTRELSZ);
   if (dt_sz != nullptr && has(DYNAMIC_TAGS::DT_JMPREL)) {
@@ -1085,9 +1114,37 @@ bool Binary::is_pie() const {
                                        [] (const std::unique_ptr<Segment>& entry) {
                                          return entry->type() == SEGMENT_TYPES::PT_INTERP;
                                        });
+  if (header().file_type() != E_TYPE::ET_DYN) {
+    return false;
+  }
 
-  return it_segment != std::end(segments_) &&
-         header().file_type() == E_TYPE::ET_DYN;
+  /* If the ELF binary uses an interpreter, then it is position
+   * independant since the interpreter aims at loading the binary at a random base address
+   */
+  if (it_segment != std::end(segments_)) {
+    return true;
+  }
+  /* It also exists ELF executables which don't have PT_INTERP but are
+   * PIE (see: https://github.com/lief-project/LIEF/issues/747). That's
+   * the case, for instance, when compiling with the -static-pie flag
+   *
+   * While header().file_type() == E_TYPE::ET_DYN is a requirement
+   * for PIC binary (Position independant **CODE**), it does not enable
+   * to distinguish PI **Executables** from libraries.
+   *
+   * Therefore, we add the following checks:
+   * 1. The binary embeds a PT_DYNAMIC segment
+   * 2. The dynamic table contains a DT_FLAGS_1 set with PIE
+   */
+
+
+  if (has(SEGMENT_TYPES::PT_DYNAMIC)) {
+    if (const auto* flag = static_cast<const DynamicEntryFlags*>(get(DYNAMIC_TAGS::DT_FLAGS_1))) {
+      return flag->has(DYNAMIC_FLAGS_1::DF_1_PIE);
+    }
+  }
+
+  return false;
 }
 
 
@@ -1097,7 +1154,12 @@ bool Binary::has_nx() const {
                                        return segment->type() == SEGMENT_TYPES::PT_GNU_STACK;
                                      });
   if (it_stack == std::end(segments_)) {
-    return false;
+    if (header().machine_type() == ARCH::EM_PPC64) {
+      // The PPC64 ELF ABI has a non-executable stack by default.
+      return true;
+    } else {
+      return false;
+    }
   }
 
   return !(*it_stack)->has(ELF_SEGMENT_FLAGS::PF_X);
@@ -1667,6 +1729,11 @@ void Binary::write(const std::string& filename) {
   builder.write(filename);
 }
 
+void Binary::write(std::ostream& os) {
+  Builder builder{*this};
+  builder.build();
+  builder.write(os);
+}
 
 uint64_t Binary::entrypoint() const {
   return header().entrypoint();
@@ -2089,8 +2156,8 @@ uint64_t Binary::last_offset_segment() const {
 
 uint64_t Binary::next_virtual_address() const {
 
-  uint64_t va = std::accumulate(std::begin(segments_), std::end(segments_), 0llu,
-            [] (uint32_t address, const std::unique_ptr<Segment>& segment) {
+  uint64_t va = std::accumulate(std::begin(segments_), std::end(segments_), uint64_t{ 0u },
+            [] (uint64_t address, const std::unique_ptr<Segment>& segment) {
               return std::max<uint64_t>(segment->virtual_address() + segment->virtual_size(), address);
             });
 
@@ -3029,7 +3096,11 @@ uint64_t Binary::relocate_phdr_table_v1() {
       continue;
     }
     Segment* adjacent = load_seg[i + 1];
-    const size_t gap = adjacent->file_offset() - (current->file_offset() + current->physical_size());
+    const int64_t gap = adjacent->file_offset() - (current->file_offset() + current->physical_size());
+    if (gap <= 0) {
+      continue;
+    }
+
     const size_t nb_seg_gap = gap / phdr_size;
     LIEF_DEBUG("Gap between {:d} <-> {:d}: {:x} ({:d} segments)", i, i + 1, gap, nb_seg_gap);
     if (nb_seg_gap > potential_size) {
@@ -3060,7 +3131,10 @@ uint64_t Binary::relocate_phdr_table_v1() {
 
   // Extend the segment that wraps the next PHDR table so that it is contiguous
   // with the next segment.
-  size_t delta = next_to_extend->file_offset() - (seg_to_extend->file_offset() + seg_to_extend->physical_size());
+  int64_t delta = next_to_extend->file_offset() - (seg_to_extend->file_offset() + seg_to_extend->physical_size());
+  if (delta <= 0) {
+    return 0;
+  }
   const size_t nb_segments = delta / phdr_size - header.numberof_segments();
   if (nb_segments < header.numberof_segments()) {
     LIEF_DEBUG("The layout of this binary does not enable to relocate the segment table (v1)\n"
@@ -3338,8 +3412,9 @@ std::ostream& Binary::print(std::ostream& os) const {
   return os;
 }
 
-
-
 Binary::~Binary() = default;
+
+
+
 }
 }

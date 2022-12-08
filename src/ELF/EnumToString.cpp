@@ -60,7 +60,7 @@ const char* to_string(VERSION e) {
 
 const char* to_string(ARCH e) {
   CONST_MAP(ARCH, const char*, 177) enumStrings {
-    { ARCH::EM_NONE,          "None" },
+    { ARCH::EM_NONE,          "NONE" },
     { ARCH::EM_M32,           "M32"},
     { ARCH::EM_SPARC,         "SPARC"},
     { ARCH::EM_386,           "i386"},
@@ -1195,14 +1195,16 @@ const char* to_string(DYNSYM_COUNT_METHODS e) {
 
 
 const char* to_string(NOTE_TYPES e) {
-  CONST_MAP(NOTE_TYPES, const char*, 7) enumStrings {
-    { NOTE_TYPES::NT_UNKNOWN,          "UNKNOWN"},
-    { NOTE_TYPES::NT_GNU_ABI_TAG,      "ABI_TAG"},
-    { NOTE_TYPES::NT_GNU_HWCAP,        "HWCAP"},
-    { NOTE_TYPES::NT_GNU_BUILD_ID,     "BUILD_ID"},
-    { NOTE_TYPES::NT_GNU_GOLD_VERSION, "GOLD_VERSION"},
-    { NOTE_TYPES::NT_GNU_PROPERTY_TYPE_0, "PROPERTY_TYPE_0"},
-    { NOTE_TYPES::NT_CRASHPAD,         "CRASHPAD"},
+  CONST_MAP(NOTE_TYPES, const char*, 9) enumStrings {
+    { NOTE_TYPES::NT_UNKNOWN,                  "UNKNOWN"},
+    { NOTE_TYPES::NT_GNU_ABI_TAG,              "ABI_TAG"},
+    { NOTE_TYPES::NT_GNU_HWCAP,                "HWCAP"},
+    { NOTE_TYPES::NT_GNU_BUILD_ID,             "BUILD_ID"},
+    { NOTE_TYPES::NT_GNU_GOLD_VERSION,         "GOLD_VERSION"},
+    { NOTE_TYPES::NT_GNU_PROPERTY_TYPE_0,      "PROPERTY_TYPE_0"},
+    { NOTE_TYPES::NT_GNU_BUILD_ATTRIBUTE_OPEN, "GNU_BUILD_ATTRIBUTE_OPEN"},
+    { NOTE_TYPES::NT_GNU_BUILD_ATTRIBUTE_FUNC, "GNU_BUILD_ATTRIBUTE_FUNC"},
+    { NOTE_TYPES::NT_CRASHPAD,                 "CRASHPAD"},
   };
 
   const auto it = enumStrings.find(e);

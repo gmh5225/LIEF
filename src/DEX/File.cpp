@@ -14,8 +14,11 @@
  * limitations under the License.
  */
 #include <fstream>
+#include <climits>
+#include "LIEF/BinaryStream/SpanStream.hpp"
 #include "logging.hpp"
 #include "LIEF/DEX/File.hpp"
+#include "LIEF/DEX/utils.hpp"
 #include "LIEF/DEX/instructions.hpp"
 #include "LIEF/DEX/Class.hpp"
 #include "LIEF/DEX/Method.hpp"
@@ -23,7 +26,9 @@
 #include "LIEF/DEX/hash.hpp"
 #include "DEX/Structures.hpp"
 
+#if defined(LIEF_JSON_SUPPORT)
 #include "visitors/json.hpp"
+#endif
 
 namespace LIEF {
 namespace DEX {
@@ -35,8 +40,9 @@ File::~File() = default;
 
 dex_version_t File::version() const {
   Header::magic_t m = header().magic();
-  const auto* version = reinterpret_cast<const char*>(m.data() + sizeof(details::magic));
-  return static_cast<dex_version_t>(std::stoul(version));
+  span<const uint8_t> data(m.data(), m.size());
+  SpanStream stream(data);
+  return DEX::version(stream);
 }
 
 std::string File::save(const std::string& path, bool deoptimize) const {
@@ -86,7 +92,7 @@ std::vector<uint8_t> File::raw(bool deoptimize) const {
     while (inst_ptr < inst_end) {
       uint16_t dex_pc = (inst_ptr - inst_start) / sizeof(uint16_t);
       auto opcode = static_cast<OPCODES>(*inst_ptr);
-      uint32_t value = -1u;
+      uint32_t value = UINT_MAX;
 
       if (meth_info.find(dex_pc) != std::end(meth_info)) {
         value = meth_info[dex_pc];

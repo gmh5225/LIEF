@@ -37,6 +37,7 @@ class BinaryStream;
 class SpanStream;
 
 namespace MachO {
+class ChainedBindingInfo;
 class CodeSignature;
 class CodeSignatureDir;
 class DataInCode;
@@ -74,10 +75,10 @@ class LIEF_API BinaryParser : public LIEF::Parser {
   friend class MachO::Parser;
 
   //! Maximum number of relocations
-  constexpr static size_t MAX_RELOCATIONS = std::numeric_limits<uint16_t>::max();
+  constexpr static size_t MAX_RELOCATIONS = (std::numeric_limits<uint16_t>::max)();
 
   //! Maximum number of MachO LoadCommand
-  constexpr static size_t MAX_COMMANDS = std::numeric_limits<uint16_t>::max();
+  constexpr static size_t MAX_COMMANDS = (std::numeric_limits<uint16_t>::max)();
 
   public:
   static std::unique_ptr<Binary> parse(const std::string& file);
@@ -228,6 +229,8 @@ class LIEF_API BinaryParser : public LIEF::Parser {
 
   ok_error_t parse_export_trie(exports_list_t& exports, uint64_t start,
                                uint64_t end, const std::string& prefix);
+
+  void copy_from(ChainedBindingInfo& to, ChainedBindingInfo& from);
 
   std::unique_ptr<BinaryStream>  stream_;
   std::unique_ptr<Binary>        binary_;

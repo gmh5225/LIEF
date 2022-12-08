@@ -9,14 +9,20 @@ import copy
 import distutils
 from pkg_resources import get_distribution
 from setuptools import setup, Extension
-from setuptools.command.build_ext import build_ext, copy_file
+from setuptools.command.build_ext import build_ext
 from distutils import log
+from shutil import copy2
 
-from distutils.version import LooseVersion
-
+try:
+    from packaging import version
+except ImportError:
+    # Fallback on the packaging embedded in setuptools.
+    # This is not the cleanest solution but it enables to avoid an extra dependency.
+    from setuptools._vendor.packaging import version
 
 MIN_SETUPTOOLS_VERSION = "31.0.0"
-assert (LooseVersion(setuptools.__version__) >= LooseVersion(MIN_SETUPTOOLS_VERSION)), "LIEF requires a setuptools version '{}' or higher (pip install setuptools --upgrade)".format(MIN_SETUPTOOLS_VERSION)
+assert (version.parse(setuptools.__version__) >= version.parse(MIN_SETUPTOOLS_VERSION)), \
+        f"LIEF requires a setuptools version '{MIN_SETUPTOOLS_VERSION}' or higher (pip install setuptools --upgrade)"
 
 CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
 PACKAGE_NAME = "lief"
@@ -50,6 +56,7 @@ class LiefDistribution(setuptools.Distribution):
 
         ('spdlog-dir=', None, 'Path to the directory that contains spdlogConfig.cmake'),
         ('lief-config-extra=', None, "Extra CMake config options (list delimited with ';')"),
+        ('osx-arch=', None, 'Architecture when cross-compiling for OSX'),
     ]
 
     def __init__(self, attrs=None):
@@ -76,6 +83,7 @@ class LiefDistribution(setuptools.Distribution):
 
         self.spdlog_dir = None
         self.lief_config_extra = None
+        self.osx_arch = None
         super().__init__(attrs)
 
 
@@ -131,10 +139,13 @@ class BuildLibrary(build_ext):
             cmake_args += ["-G", "Ninja"]
 
         cmake_args += [
-            '-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={}'.format(cmake_library_output_directory),
-            '-DPYTHON_EXECUTABLE={}'.format(sys.executable),
+            f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={cmake_library_output_directory}',
+            f'-DPYTHON_EXECUTABLE={sys.executable}',
             '-DLIEF_PYTHON_API=on',
         ]
+
+        if self.distribution.osx_arch is not None:
+            cmake_args += [f'-DCMAKE_OSX_ARCHITECTURES={self.distribution.osx_arch}']
 
         # LIEF options
         # ============
@@ -166,7 +177,7 @@ class BuildLibrary(build_ext):
         # the user provides --spdlog-dir
         if self.distribution.spdlog_dir is not None:
             cmake_args.append("-DLIEF_EXTERNAL_SPDLOG=ON")
-            cmake_args.append("-Dspdlog_DIR={}".format(self.distribution.spdlog_dir))
+            cmake_args.append(f"-Dspdlog_DIR={self.distribution.spdlog_dir}")
 
         if self.distribution.lief_config_extra is not None and len(self.distribution.lief_config_extra) > 0:
             args = self.distribution.lief_config_extra.replace("\n", "")
@@ -208,24 +219,25 @@ class BuildLibrary(build_ext):
         build_args = ['--config', cfg]
 
         env = os.environ
+        cxx_flags = os.getenv("CXXFLAGS", None)
+        c_flags = os.getenv("CFLAGS", None)
 
-        if os.getenv("CXXFLAGS", None) is not None:
+        if cxx_flags is not None:
             cmake_args += [
-                '-DCMAKE_CXX_FLAGS={}'.format(os.getenv("CXXFLAGS")),
+                f'-DCMAKE_CXX_FLAGS={cxx_flags}',
             ]
 
-        if os.getenv("CFLAGS", None) is not None:
+        if c_flags is not None:
             cmake_args += [
-                '-DCMAKE_C_FLAGS={}'.format(os.getenv("CFLAGS")),
+                f'-DCMAKE_C_FLAGS={c_flags}',
             ]
 
-
-        if platform.system() == "Windows":
+        if platform.system() == "Windows" and not sysconfig.get_platform().startswith("mingw"):
             from setuptools import msvc
 
             cmake_args += [
-                '-DCMAKE_BUILD_TYPE={}'.format(cfg),
-                '-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_{}={}'.format(cfg.upper(), cmake_library_output_directory),
+                f'-DCMAKE_BUILD_TYPE={cfg}',
+                f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_{cfg.upper()}={cmake_library_output_directory}',
                 '-DLIEF_USE_CRT_RELEASE=MT',
             ]
             if build_with_ninja:
@@ -236,13 +248,13 @@ class BuildLibrary(build_ext):
                 cmake_args += ['-A', 'x64'] if is64 else ['-A', 'win32']
                 build_args += ['--', '/m']
         else:
-            cmake_args += ['-DCMAKE_BUILD_TYPE={}'.format(cfg)]
+            cmake_args += [f'-DCMAKE_BUILD_TYPE={cfg}']
 
 
         if not os.path.exists(self.build_temp):
             os.makedirs(self.build_temp)
 
-        log.info("Platform: %s", platform.system())
+        log.info(f"Platform: %s", platform.system())
         log.info("Wheel library: %s", self.get_ext_fullname(ext.name))
 
         # 1. Configure
@@ -260,7 +272,7 @@ class BuildLibrary(build_ext):
         if self.distribution.doc:
             targets['doc'] = "lief-doc"
 
-        if platform.system() == "Windows":
+        if platform.system() == "Windows" and not sysconfig.get_platform().startswith("mingw"):
             if self.distribution.lief_test:
                 subprocess.check_call(configure_cmd, cwd=self.build_temp, env=env)
                 if build_with_ninja:
@@ -275,24 +287,27 @@ class BuildLibrary(build_ext):
                 subprocess.check_call(['cmake', '--build', '.', '--target', targets['sdk']] + build_args, cwd=self.build_temp, env=env)
 
         else:
+            if self.parallel:
+                log.info(f"Using {jobs} jobs")
+
             if build_with_ninja:
+                jobs_opt = ["-j", str(jobs)] if self.parallel else []
                 if self.distribution.lief_test:
                     subprocess.check_call(configure_cmd, cwd=self.build_temp)
-                    subprocess.check_call(['ninja'], cwd=self.build_temp)
-                    subprocess.check_call(['ninja', "check-lief"], cwd=self.build_temp)
+                    subprocess.check_call(['ninja'] + jobs_opt, cwd=self.build_temp)
+                    subprocess.check_call(['ninja'] + jobs_opt + ["check-lief"], cwd=self.build_temp)
                 else:
-                    subprocess.check_call(['ninja', targets['python_bindings']], cwd=self.build_temp, env=env)
+                    subprocess.check_call(['ninja'] + jobs_opt + [targets['python_bindings']], cwd=self.build_temp, env=env)
 
                 if 'sdk' in targets:
-                    subprocess.check_call(['ninja', targets['sdk']], cwd=self.build_temp, env=env)
+                    subprocess.check_call(['ninja'] + jobs_opt + [targets['sdk']], cwd=self.build_temp, env=env)
 
                 if 'doc' in targets:
                     try:
-                        subprocess.check_call(['ninja', targets['doc']], cwd=self.build_temp, env=env)
+                        subprocess.check_call(['ninja'] + jobs_opt + [targets['doc']], cwd=self.build_temp, env=env)
                     except Exception as e:
-                        log.error("Documentation failed: %s" % e)
+                        log.error(f"Documentation failed: {e}")
             else:
-                log.info("Using {} jobs".format(jobs))
                 if self.distribution.lief_test:
                     subprocess.check_call(configure_cmd, cwd=self.build_temp)
                     subprocess.check_call(['make', '-j', str(jobs), "all"], cwd=self.build_temp)
@@ -307,12 +322,12 @@ class BuildLibrary(build_ext):
                     try:
                         subprocess.check_call(['make', '-j', str(jobs), targets['doc']], cwd=self.build_temp, env=env)
                     except Exception as e:
-                        log.error("Documentation failed: %s" % e)
+                        log.error(f"Documentation failed: {e}")
         pylief_dst  = os.path.join(self.build_lib, self.get_ext_filename(self.get_ext_fullname(ext.name)))
         libsuffix = pylief_dst.split(".")[-1]
 
         pylief_path = os.path.join(cmake_library_output_directory, "{}.{}".format(PACKAGE_NAME, libsuffix))
-        if platform.system() == "Windows":
+        if platform.system() == "Windows" and not sysconfig.get_platform().startswith("mingw"):
             pylief_base = pathlib.Path(cmake_library_output_directory) / "Release" / "api" / "python"
             pylief_path = pylief_base / "Release" / "{}.{}".format(PACKAGE_NAME, libsuffix)
             if not pylief_path.is_file():
@@ -323,26 +338,23 @@ class BuildLibrary(build_ext):
         if not os.path.exists(self.build_lib):
             os.makedirs(self.build_lib)
 
-        log.info("Copying {} into {}".format(pylief_path, pylief_dst))
-        copy_file(
-                pylief_path, pylief_dst, verbose=self.verbose,
-                dry_run=self.dry_run)
+        log.info(f"Copying {pylief_path} into {pylief_dst}")
+        if not self.dry_run:
+            copy2(pylief_path, pylief_dst)
 
 
         # SDK
         # ===
         if self.distribution.sdk:
-            sdk_path = list(pathlib.Path(self.build_temp).rglob("LIEF-*.{}".format(self.sdk_suffix())))
+            sdk_path = list(pathlib.Path(self.build_temp).rglob(f"LIEF-*.{self.sdk_suffix()}"))
             if len(sdk_path) == 0:
                 log.error("Unable to find SDK archive")
                 sys.exit(1)
 
             sdk_path = str(sdk_path.pop())
             sdk_output = str(pathlib.Path(CURRENT_DIR) / "build")
-
-            copy_file(
-                sdk_path, sdk_output, verbose=self.verbose,
-                dry_run=self.dry_run)
+            if not self.dry_run:
+                copy2(sdk_path, sdk_output)
 
 def get_platform():
     out = get_platform_backup()
@@ -350,7 +362,7 @@ def get_platform():
     if lief_arch is not None and isinstance(out, str):
         original_out = out
         out = out.replace("x86_64", lief_arch)
-        log.info("   Replace %s -> %s", original_out, out)
+        log.info(f"   Replace {original_out} -> {out}")
     return out
 
 def get_config_vars(*args):
@@ -365,7 +377,7 @@ def get_config_vars(*args):
         if k not in {"SO", "SOABI", "EXT_SUFFIX", "BUILD_GNU_TYPE"}:
             continue
         fix = v.replace("x86_64", lief_arch)
-        log.info("   Replace %s: %s -> %s", k, v, fix)
+        log.info(f"   Replace {k}: {v} -> {fix}")
         out_xfix[k] = fix
 
     return out_xfix
@@ -393,7 +405,7 @@ def distutils_get_config_vars(*args):
         if k not in {"SO", "SOABI", "EXT_SUFFIX", "BUILD_GNU_TYPE"}:
             continue
         fix = v.replace("x86_64", lief_arch)
-        log.info("   Replace %s: %s -> %s", k, v, fix)
+        log.info(f"   Replace {k}: {v} -> {fix}")
         out_xfix[k] = fix
 
     return out_xfix
@@ -428,7 +440,7 @@ def format_version(version: str, fmt: str = fmt_dev, is_dev: bool = False):
     MA, MI, PA = map(int, tag.split(".")) # 0.9.0 -> (0, 9, 0)
 
     if is_dev:
-        tag = "{}.{}.{}".format(MA, MI + 1, 0)
+        tag = f"{MA}.{MI + 1}.{0}"
 
     if count == '0' and not dirty:
         return tag

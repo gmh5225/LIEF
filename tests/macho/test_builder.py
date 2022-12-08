@@ -164,6 +164,8 @@ def test_add_section_id(tmp_path):
         section = lief.MachO.Section(f"__lief_{i}", [0x90] * 0x100)
         original.add_section(section)
 
+    assert original.virtual_size % original.page_size == 0
+
     original.write(output)
     new = lief.parse(output)
 
@@ -182,6 +184,7 @@ def test_add_section_ssh(tmp_path):
     bin_path = pathlib.Path(get_sample("MachO/MachO64_x86-64_binary_sshd.bin"))
     original = lief.parse(bin_path.as_posix())
     output = f"{tmp_path}/test_add_section_sshd.sshd.bin"
+    page_size = original.page_size
 
     # Add 3 section into __TEXT
     __text = original.get_segment("__TEXT")
@@ -189,6 +192,9 @@ def test_add_section_ssh(tmp_path):
         section = lief.MachO.Section(f"__text_{i}")
         section.content = [0xC3] * 0x100
         original.add_section(__text, section)
+
+    assert original.virtual_size % page_size == 0
+    assert __text.virtual_size % page_size == 0
 
     original.remove_signature()
     original.write(output)
@@ -300,6 +306,27 @@ def test_remove_section(tmp_path):
         print(stdout)
         assert re.search(r'Hello World', stdout) is not None
 
+def test_remove_section_with_segment_name(tmp_path):
+    bin_path = pathlib.Path(get_sample("MachO/MachO64_x86-64_binary_section_to_remove.bin"))
+    original = lief.parse(bin_path.as_posix())
+    output = f"{tmp_path}/{bin_path.name}"
+
+    original.remove_section("__DATA", "__to_remove")
+
+    original.write(output)
+    new = lief.parse(output)
+
+    checked, err = lief.MachO.check_layout(new)
+    assert checked, err
+
+    assert new.get_section("__DATA", "__to_remove") is None
+
+    if is_osx():
+        assert run_program(bin_path.as_posix())
+        stdout = run_program(output)
+
+        print(stdout)
+        assert re.search(r'Hello World', stdout) is not None
 
 def test_objc_arm64(tmp_path):
     bin_path = pathlib.Path(get_sample("MachO/test_objc_arm64.macho"))
@@ -512,3 +539,14 @@ def test_break(tmp_path):
             print(stdout)
             assert re.search(r'All tests PASS', stdout) is not None
 
+def test_issue_726(tmp_path):
+    for filename in ("MachO/mbedtls_selftest_arm64.bin", "MachO/mbedtls_selftest_x86_64.bin"):
+        bin_path = pathlib.Path(get_sample(filename))
+        original = lief.parse(bin_path.as_posix())
+        output = f"{tmp_path}/{bin_path.name}"
+
+        original.write(output)
+        new = lief.parse(output)
+
+        for parsed in (original, new):
+            assert parsed.get_segment("__LINKEDIT").virtual_size % parsed.page_size == 0

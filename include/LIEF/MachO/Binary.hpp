@@ -1,3 +1,4 @@
+
 /* Copyright 2017 - 2022 R. Thomas
  * Copyright 2017 - 2022 Quarkslab
  *
@@ -226,6 +227,11 @@ class LIEF_API Binary : public LIEF::Binary  {
   //! @param filename Path to write the reconstructed binary
   void write(const std::string& filename) override;
 
+  //! Reconstruct the binary object and write the result in the given `os` stream
+  //!
+  //! @param os Output stream to write the reconstructed binary
+  void write(std::ostream& os) override;
+
   //! Reconstruct the binary object and return its content as bytes
   std::vector<uint8_t> raw();
 
@@ -266,6 +272,15 @@ class LIEF_API Binary : public LIEF::Binary  {
   //! @param name     Name of the MachO::Section to remove
   //! @param clear    If ``true`` clear the content of the section before removing
   void remove_section(const std::string& name, bool clear = false) override;
+
+  //! Remove the section from the segment with the name
+  //! given in the first parameter and with the section's name provided in the
+  //! second parameter
+  //!
+  //! @param segname     Name of the MachO::Segment
+  //! @param secname     Name of the MachO::Section to remove
+  //! @param clear       If ``true`` clear the content of the section before removing
+  void remove_section(const std::string& segname, const std::string& secname, bool clear = false);
 
   //! Remove the given LoadCommand
   bool remove(const LoadCommand& command);
@@ -312,9 +327,9 @@ class LIEF_API Binary : public LIEF::Binary  {
   //! Return the section from the segment with the name
   //! given in the first parameter and with the section's name provided in the
   //! second parameter. If the section cannot be found, it returns a nullptr
-  Section* get_section(const std::string& sgname, const std::string& secname);
+  Section* get_section(const std::string& segname, const std::string& secname);
 
-  const Section* get_section(const std::string& sgname, const std::string& secname) const;
+  const Section* get_section(const std::string& segname, const std::string& secname) const;
 
   //! Check if a segment with the given name exists
   bool has_segment(const std::string& name) const;
@@ -633,7 +648,7 @@ class LIEF_API Binary : public LIEF::Binary  {
 
   //! Shift the content located right after the Load commands table.
   //! This operation can be used to add a new command
-  void shift(size_t value);
+  ok_error_t shift(size_t value);
 
   //! Shift the position on the __LINKEDIT data by `width`
   ok_error_t shift_linkedit(size_t width);
@@ -646,11 +661,13 @@ class LIEF_API Binary : public LIEF::Binary  {
     return in_memory_base_addr_;
   }
 
+  uint32_t page_size() const;
+
   private:
   //! Default constructor
   Binary();
 
-  void shift_command(size_t width, size_t from_offset);
+  void shift_command(size_t width, uint64_t from_offset);
 
   //! Insert a Segment command in the cache field (segments_)
   //! and keep a consistent state of the indexes.

@@ -29,6 +29,7 @@
 #include <sstream>
 #include <algorithm>
 #include <iostream>
+#include <climits>
 
 #define TMPL_DECL(T) template T BinaryStream::swap_endian<T>(T u)
 
@@ -228,7 +229,6 @@ result<std::u16string> BinaryStream::peek_u16string() const {
     return u16_str;
   }
 
-  size_t count = 0;
   do {
     c = peek<char16_t>(off);
     if (!c) {
@@ -236,7 +236,6 @@ result<std::u16string> BinaryStream::peek_u16string() const {
     }
     off += sizeof(char16_t);
     u16_str.push_back(*c);
-    ++count;
   } while (c && *c != 0 && off < size());
   u16_str.back() = '\0';
   return u16_str.c_str();
@@ -250,7 +249,7 @@ result<std::u16string> BinaryStream::read_u16string(size_t length) const {
 }
 
 result<std::u16string> BinaryStream::peek_u16string(size_t length) const {
-  if (length == static_cast<size_t>(-1u)) {
+  if (length == static_cast<size_t>(SIZE_MAX)) {
     return peek_u16string();
   }
 

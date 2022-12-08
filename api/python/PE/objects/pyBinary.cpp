@@ -364,12 +364,18 @@ void create<Binary>(py::module& m) {
         py::return_value_policy::reference)
 
     .def_property_readonly("overlay",
-        static_cast<no_const_getter<std::vector<uint8_t>&>>(&Binary::overlay),
+        [] (Binary& self) {
+          span<const uint8_t> content = self.overlay();
+          return py::memoryview::from_memory(content.data(), content.size());
+        },
         "Return the overlay content as a ``list`` of bytes",
         py::return_value_policy::reference)
 
     .def_property("dos_stub",
-        static_cast<getter_t<const std::vector<uint8_t>&>>(&Binary::dos_stub),
+        [] (Binary& self) {
+          span<const uint8_t> content = self.dos_stub();
+          return py::memoryview::from_memory(content.data(), content.size());
+        },
         static_cast<setter_t<const std::vector<uint8_t>&>>(&Binary::dos_stub),
         "DOS stub content as a ``list`` of bytes")
 
@@ -405,7 +411,7 @@ void create<Binary>(py::module& m) {
         "Remove all imported libraries")
 
     .def("write",
-        &Binary::write,
+        static_cast<void (Binary::*)(const std::string&)>(&Binary::write),
         "Build the binary and write the result to the given ``output`` file",
         "output_path"_a)
 

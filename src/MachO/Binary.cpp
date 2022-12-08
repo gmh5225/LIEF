@@ -17,12 +17,6 @@
 #include <numeric>
 #include <sstream>
 
-#if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
-#include <unistd.h>
-#else
-#define getpagesize() 0x1000
-#endif
-
 #include "logging.hpp"
 
 
@@ -469,6 +463,9 @@ void Binary::write(const std::string& filename) {
   Builder::write(*this, filename);
 }
 
+void Binary::write(std::ostream& os) {
+  Builder::write(*this, os);
+}
 
 const Section* Binary::section_from_offset(uint64_t offset) const {
   const auto it_section = std::find_if(
@@ -533,13 +530,17 @@ SegmentCommand* Binary::segment_from_virtual_address(uint64_t virtual_address) {
 }
 
 const SegmentCommand* Binary::segment_from_offset(uint64_t offset) const {
+  if (offset_seg_.empty()) {
+    return nullptr;
+  }
+
   const auto it_begin = std::begin(offset_seg_);
   if (offset < it_begin->first) {
     return nullptr;
   }
 
   auto it = offset_seg_.lower_bound(offset);
-  if (it->first == offset || it == it_begin) {
+  if (it != std::end(offset_seg_) && (it->first == offset || it == it_begin)) {
     SegmentCommand* seg = it->second;
     if (seg->file_offset() <= offset && offset < (seg->file_offset() + seg->file_size())) {
       return seg;
@@ -700,11 +701,17 @@ ok_error_t Binary::shift_linkedit(size_t width) {
   return ok();
 }
 
-void Binary::shift_command(size_t width, size_t from_offset) {
+uint32_t Binary::page_size() const {
+  const bool is_arm = header().cpu_type() == CPU_TYPES::CPU_TYPE_ARM ||
+                      header().cpu_type() == CPU_TYPES::CPU_TYPE_ARM64;
+  return is_arm ? 0x4000 : 0x1000;
+}
+
+void Binary::shift_command(size_t width, uint64_t from_offset) {
   const SegmentCommand* segment = segment_from_offset(from_offset);
 
-  size_t __text_base_addr = 0;
-  size_t virtual_address = 0;
+  uint64_t __text_base_addr = 0;
+  uint64_t virtual_address = 0;
 
   if (segment != nullptr) {
     virtual_address = segment->virtual_address() + from_offset;
@@ -933,7 +940,7 @@ void Binary::shift_command(size_t width, size_t from_offset) {
 }
 
 
-void Binary::shift(size_t value) {
+ok_error_t Binary::shift(size_t value) {
   Header& header = this->header();
 
   // Offset of the load commands table
@@ -957,7 +964,7 @@ void Binary::shift(size_t value) {
   SegmentCommand* load_cmd_segment = segment_from_offset(loadcommands_end);
   if (load_cmd_segment == nullptr) {
     LIEF_WARN("Can't find segment associated with last load command");
-    return;
+    return make_error_code(lief_errors::file_format_error);
   }
   LIEF_DEBUG("LC Table wrapped by {} / End offset: 0x{:x} (size: {:x})",
              load_cmd_segment->name(), loadcommands_end, load_cmd_segment->data_.size());
@@ -1009,6 +1016,7 @@ void Binary::shift(size_t value) {
     }
   }
   refresh_seg_offset();
+  return ok();
 }
 
 
@@ -1019,7 +1027,9 @@ LoadCommand* Binary::add(const LoadCommand& command) {
   // Check there is enough spaces between the load command table
   // and the raw content
   if (available_command_space_ < size_aligned) {
-    shift(shift_value);
+    if (!shift(shift_value)) {
+      return nullptr;
+    }
     available_command_space_ += shift_value;
     return add(command);
   }
@@ -1102,7 +1112,7 @@ LoadCommand* Binary::add(const LoadCommand& command, size_t index) {
 
   // Get offset of the LC border
   LoadCommand* cmd_border = commands_[index].get();
-  size_t border_off = cmd_border->command_offset();
+  uint64_t border_off = cmd_border->command_offset();
 
   std::unique_ptr<LoadCommand> copy{command.clone()};
   copy->command_offset(cmd_border->command_offset());
@@ -1165,7 +1175,7 @@ bool Binary::remove(const LoadCommand& command) {
     }
   }
 
-  const size_t cmd_rm_offset = cmd_rm->command_offset();
+  const uint64_t cmd_rm_offset = cmd_rm->command_offset();
   for (std::unique_ptr<LoadCommand>& cmd : commands_) {
     if (cmd->command_offset() >= cmd_rm_offset) {
       cmd->command_offset(cmd->command_offset() - cmd_rm->size());
@@ -1280,8 +1290,8 @@ bool Binary::extend_segment(const SegmentCommand& segment, size_t size) {
   }
 
   SegmentCommand* target_segment = *it_segment;
-  const size_t last_offset = target_segment->file_offset() + target_segment->file_size();
-  const size_t last_va     = target_segment->virtual_address() + target_segment->virtual_size();
+  const uint64_t last_offset = target_segment->file_offset() + target_segment->file_size();
+  const uint64_t last_va     = target_segment->virtual_address() + target_segment->virtual_size();
 
   const int32_t size_aligned = align(size, pointer_size());
 
@@ -1320,6 +1330,22 @@ void Binary::remove_section(const std::string& name, bool clear) {
   Section* sec_to_delete = get_section(name);
   if (sec_to_delete == nullptr) {
     LIEF_ERR("Can't find section '{}'", name);
+    return;
+  }
+  SegmentCommand* segment = sec_to_delete->segment();
+  if (segment == nullptr) {
+    LIEF_ERR("The section {} is in an inconsistent state (missing segment). Can't remove it",
+             sec_to_delete->name());
+    return;
+  }
+
+  remove_section(segment->name(), name, clear);
+}
+
+void Binary::remove_section(const std::string& segname, const std::string& secname, bool clear) {
+  Section* sec_to_delete = get_section(segname, secname);
+  if (sec_to_delete == nullptr) {
+    LIEF_ERR("Can't find section '{}' in segment '{}'", secname, segname);
     return;
   }
   SegmentCommand* segment = sec_to_delete->segment();
@@ -1407,7 +1433,7 @@ Section* Binary::add_section(const SegmentCommand& segment, const Section& secti
   const size_t sec_size = is64_ ? sizeof(details::section_64) :
                                   sizeof(details::section_32);
   const size_t data_size = content.size();
-  const int32_t needed_size = align(sec_size + data_size, getpagesize());
+  const int32_t needed_size = align(sec_size + data_size, page_size());
   if (available_command_space_ < needed_size) {
     shift(needed_size);
     available_command_space_ += needed_size;
@@ -1449,7 +1475,7 @@ Section* Binary::add_section(const SegmentCommand& segment, const Section& secti
   sections_.push_back(new_section.get());
 
   // Copy data to segment
-  const size_t relative_offset = new_section->offset() - target_segment->file_offset();
+  const uint64_t relative_offset = new_section->offset() - target_segment->file_offset();
 
   std::move(std::begin(content), std::end(content),
             std::begin(target_segment->data_) + relative_offset);
@@ -1499,11 +1525,8 @@ LoadCommand* Binary::add(const SegmentCommand& segment) {
    * ```
    * Therefore, we must shift __LINKEDIT by at least 4 * 0x1000 for Mach-O files targeting ARM
    */
-
   LIEF_DEBUG("Adding the new segment '{}' ({} bytes)", segment.name(), segment.content().size());
-  const bool is_arm = header().cpu_type() == CPU_TYPES::CPU_TYPE_ARM ||
-                      header().cpu_type() == CPU_TYPES::CPU_TYPE_ARM64;
-  const uint32_t alignment = is_arm ? 0x4000 : 0x1000;
+  const uint32_t alignment = page_size();
   const uint64_t new_fsize = align(segment.content().size(), alignment);
   SegmentCommand new_segment = segment;
 
@@ -1546,17 +1569,18 @@ LoadCommand* Binary::add(const SegmentCommand& segment) {
 
   const bool has_linkedit = it_linkedit != std::end(commands_);
 
-
   size_t pos = std::distance(std::begin(commands_), it_linkedit);
 
   LIEF_DEBUG(" -> index: {}", pos);
 
-  auto* segment_added = add(new_segment, pos)->as<SegmentCommand>();
+  auto* new_cmd = add(new_segment, pos);
 
-  if (segment_added == nullptr) {
+  if (new_cmd == nullptr) {
     LIEF_WARN("Fail to insert new '{}' segment", segment.name());
     return nullptr;
   }
+
+  auto* segment_added = new_cmd->as<SegmentCommand>();
 
   if (!has_linkedit) {
     /* If there are not __LINKEDIT segment we can point the Segment's content to the EOF
@@ -1567,7 +1591,7 @@ LoadCommand* Binary::add(const SegmentCommand& segment) {
     if (segment.virtual_address() == 0 && segment_added->virtual_size() != 0) {
       const uint64_t new_va = align(new_va_ranges.end, alignment);
       segment_added->virtual_address(new_va);
-      size_t current_va = segment_added->virtual_address();
+      uint64_t current_va = segment_added->virtual_address();
       for (Section& section : segment_added->sections()) {
         section.virtual_address(current_va);
         current_va += section.size();
@@ -1577,7 +1601,7 @@ LoadCommand* Binary::add(const SegmentCommand& segment) {
     if (segment.file_offset() == 0 && segment_added->virtual_size() != 0) {
       const uint64_t new_offset = align(new_off_ranges.end, alignment);
       segment_added->file_offset(new_offset);
-      size_t current_offset = new_offset;
+      uint64_t current_offset = new_offset;
       for (Section& section : segment_added->sections()) {
         section.offset(current_offset);
         current_offset += section.size();
@@ -1601,15 +1625,15 @@ LoadCommand* Binary::add(const SegmentCommand& segment) {
   LIEF_DEBUG(" -> virtual address: 0x{:06x}", lnk_va);
 
   segment_added->virtual_address(lnk_va);
-  segment_added->virtual_size(segment_added->file_size());
-  size_t current_va = segment_added->virtual_address();
+  segment_added->virtual_size(segment_added->virtual_size());
+  uint64_t current_va = segment_added->virtual_address();
   for (Section& section : segment_added->sections()) {
     section.virtual_address(current_va);
     current_va += section.size();
   }
 
   segment_added->file_offset(lnk_offset);
-  size_t current_offset = lnk_offset;
+  uint64_t current_offset = lnk_offset;
   for (Section& section : segment_added->sections()) {
     section.offset(current_offset);
     current_offset += section.size();
@@ -1800,17 +1824,20 @@ result<uint64_t> Binary::virtual_address_to_offset(uint64_t virtual_address) con
 result<uint64_t> Binary::offset_to_virtual_address(uint64_t offset, uint64_t slide) const {
   const SegmentCommand* segment = segment_from_offset(offset);
   if (segment == nullptr) {
-    return offset + slide;
+    return slide + offset;
   }
-  const uint64_t base_address = segment->virtual_address() - segment->file_offset();
-  if (slide > 0) {
-    const uint64_t base = imagebase();
-    if (base == 0) {
-      return slide + offset;
-    }
-    return (base_address - base) + offset + slide;
+  const uint64_t delta = segment->virtual_address() - segment->file_offset();
+  const uint64_t imgbase = imagebase();
+
+  if (slide == 0) {
+    return delta + offset;
   }
-  return base_address + offset;
+
+  if (imgbase == 0) {
+    return slide +
+           segment->virtual_address() + (offset - segment->file_offset());
+  }
+  return (segment->virtual_address() - imgbase) + slide + (offset - segment->file_offset());
 }
 
 bool Binary::disable_pie() {
@@ -1889,7 +1916,7 @@ uint64_t Binary::virtual_size() const {
     virtual_size = std::max(virtual_size, segment->virtual_address() + segment->virtual_size());
   }
   virtual_size -= imagebase();
-  virtual_size = align(virtual_size, static_cast<uint64_t>(getpagesize()));
+  virtual_size = align(virtual_size, static_cast<uint64_t>(page_size()));
   return virtual_size;
 }
 

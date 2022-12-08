@@ -43,7 +43,6 @@
 #include "LIEF/ELF/SymbolVersionAuxRequirement.hpp"
 #include "LIEF/ELF/Note.hpp"
 
-#include "LIEF/ELF/Builder.hpp"
 #include "LIEF/errors.hpp"
 
 #include "ELF/Structures.hpp"
@@ -368,7 +367,7 @@ ok_error_t Builder::build_exe_lib() {
   if (config_.gnu_hash || config_.dt_hash) {
     LIEF_SW_START(sw);
     build_hash_table<ELF_T>();
-    LIEF_SW_END("hast table built in {}", duration_cast<std::chrono::milliseconds>(sw.elapsed()));
+    LIEF_SW_END("hash table built in {}", duration_cast<std::chrono::milliseconds>(sw.elapsed()));
   }
 
   if (config_.dyn_str) {
@@ -1004,17 +1003,25 @@ ok_error_t Builder::build_dynamic_section() {
     dynamic_table_raw.write_conv<Elf_Dyn>(dynhdr);
   }
 
-  // Update the PT_DYNAMIC segment
-  Segment* dynamic_seg = binary_->get(SEGMENT_TYPES::PT_DYNAMIC);
-  if (dynamic_seg == nullptr) {
-    LIEF_ERR("Can't find the PT_DYNAMIC segment");
-    return make_error_code(lief_errors::file_format_error);
-  }
   std::vector<uint8_t> raw = dynamic_table_raw.raw();
-  dynamic_seg->physical_size(raw.size());
-  dynamic_seg->virtual_size(raw.size());
-  dynamic_seg->content(std::move(raw));
-  return ok();
+
+  // Update the dynamic section if present
+  if (Section* dynamic_section = binary_->get_section(".dynamic")) {
+    dynamic_section->content(raw);
+  } else {
+    LIEF_INFO("Can't find the .dynamic section; will still try to update PT_DYNAMIC.");
+  }
+
+  // Update the PT_DYNAMIC segment
+  if (Segment* dynamic_seg = binary_->get(SEGMENT_TYPES::PT_DYNAMIC)) {
+    dynamic_seg->physical_size(raw.size());
+    dynamic_seg->virtual_size(raw.size());
+    dynamic_seg->content(std::move(raw));
+    return ok();
+  }
+
+  LIEF_ERR("Can't find the PT_DYNAMIC segment");
+  return make_error_code(lief_errors::file_format_error);
 }
 
 
@@ -1232,6 +1239,11 @@ ok_error_t Builder::build_section_relocations() {
   auto* layout = static_cast<ObjectFileLayout*>(layout_.get());
 
   Binary::it_object_relocations object_relocations = binary_->object_relocations();
+  if (object_relocations.empty()) {
+    LIEF_ERR("Relocations are empty");
+    return make_error_code(lief_errors::not_found);
+  }
+
   const bool is_rela = object_relocations[0].is_rela();
   std::unordered_map<Section*, vector_iostream> section_content;
 
@@ -1266,7 +1278,8 @@ ok_error_t Builder::build_section_relocations() {
       if (std::is_same<ELF_T, details::ELF32>::value) {
         info = (static_cast<Elf_Xword>(symidx) << 8) | reloc->type();
       } else {
-        info = (static_cast<Elf_Xword>(symidx) << 32) | (reloc->type() & 0xffffffffL);
+        // NOTE: To suppress a warning we require a cast here, this path is not constexpr but only uses Elf64_Xword
+        info = (static_cast<details::ELF64::Elf_Xword>(symidx) << 32) | (reloc->type() & 0xffffffffL);
       }
 
       if (is_rela) {
@@ -1304,6 +1317,16 @@ ok_error_t Builder::build_dynamic_relocations() {
 
   Binary::it_dynamic_relocations dynamic_relocations = binary_->dynamic_relocations();
   if (dynamic_relocations.empty()) {
+    if (auto* DT = binary_->get(DYNAMIC_TAGS::DT_REL)) {
+      if (auto* sec = binary_->section_from_virtual_address(DT->value())) {
+        sec->size(0);
+      }
+    }
+    if (auto* DT = binary_->get(DYNAMIC_TAGS::DT_RELA)) {
+      if (auto* sec = binary_->section_from_virtual_address(DT->value())) {
+        sec->size(0);
+      }
+    }
     return ok();
   }
 
@@ -1366,7 +1389,8 @@ ok_error_t Builder::build_dynamic_relocations() {
     if (std::is_same<ELF_T, details::ELF32>::value) {
       r_info = (static_cast<Elf_Xword>(info) << 8) | relocation.type();
     } else {
-      r_info = (static_cast<Elf_Xword>(info) << 32) | (relocation.type() & 0xffffffffL);
+      // NOTE: To suppress a warning we require a cast here, this path is not constexpr but only uses Elf64_Xword
+      r_info = (static_cast<details::ELF64::Elf_Xword>(info) << 32) | (relocation.type() & 0xffffffffL);
     }
 
 
@@ -1400,6 +1424,11 @@ ok_error_t Builder::build_pltgot_relocations() {
 
   Binary::it_pltgot_relocations pltgot_relocations = binary_->pltgot_relocations();
   if (pltgot_relocations.empty()) {
+    if (auto* DT = binary_->get(DYNAMIC_TAGS::DT_JMPREL)) {
+      if (auto* sec = binary_->section_from_virtual_address(DT->value())) {
+        sec->size(0);
+      }
+    }
     return ok();
   }
 
@@ -1447,7 +1476,8 @@ ok_error_t Builder::build_pltgot_relocations() {
     if (std::is_same<ELF_T, details::ELF32>::value) {
       info = (static_cast<Elf_Xword>(idx) << 8) | relocation.type();
     } else {
-      info = (static_cast<Elf_Xword>(idx) << 32) | (relocation.type() & 0xffffffffL);
+      // NOTE: To suppress a warning we require a cast here, this path is not constexpr but only uses Elf64_Xword
+      info = (static_cast<details::ELF64::Elf_Xword>(idx) << 32) | (relocation.type() & 0xffffffffL);
     }
 
     if (is_rela) {
@@ -1626,7 +1656,7 @@ ok_error_t Builder::build_symbol_definition() {
     header.vd_ndx     = static_cast<Elf_Half>(svd.ndx());
     header.vd_cnt     = static_cast<Elf_Half>(svas.size());
     header.vd_hash    = static_cast<Elf_Word>(svd.hash());
-    header.vd_aux     = static_cast<Elf_Word>(!svas.empty() > 0 ? sizeof(Elf_Verdef) : 0);
+    header.vd_aux     = static_cast<Elf_Word>(!svas.empty() ? sizeof(Elf_Verdef) : 0);
     header.vd_next    = static_cast<Elf_Word>(next_symbol_offset);
 
     svd_raw.write_conv<Elf_Verdef>(header);
