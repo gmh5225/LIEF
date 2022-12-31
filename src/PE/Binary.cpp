@@ -693,7 +693,7 @@ Binary::make_space_for_new_section()
 }
 
 Section *
-Binary::add_section(const Section &section, PE_SECTION_TYPES type)
+Binary::add_section(const Section &section, PE_SECTION_TYPES type, SECTION_CHARACTERISTICS characteristic)
 {
     if (available_sections_space_ < 0)
     {
@@ -832,6 +832,11 @@ Binary::add_section(const Section &section, PE_SECTION_TYPES type)
         data_directory(DATA_DIRECTORY::TLS_TABLE).RVA(new_section->virtual_address());
         data_directory(DATA_DIRECTORY::TLS_TABLE).size(new_section->size());
         data_directory(DATA_DIRECTORY::TLS_TABLE).section_ = new_section.get();
+    }
+
+    if (type == PE_SECTION_TYPES::UNKNOWN)
+    {
+        new_section->add_characteristic(characteristic);
     }
 
     if (sections_.size() >= std::numeric_limits<uint16_t>::max())
