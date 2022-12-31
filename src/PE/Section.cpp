@@ -34,229 +34,271 @@ Section::~Section() = default;
 
 Section::Section() = default;
 
+Section &
+Section::operator=(const Section &) = default;
+Section::Section(const Section &) = default;
 
-Section& Section::operator=(const Section&) = default;
-Section::Section(const Section&) = default;
-
-Section::Section(const details::pe_section& header) :
-  virtual_size_{header.VirtualSize},
-  pointer_to_relocations_{header.PointerToRelocations},
-  pointer_to_linenumbers_{header.PointerToLineNumbers},
-  number_of_relocations_{header.NumberOfRelocations},
-  number_of_linenumbers_{header.NumberOfLineNumbers},
-  characteristics_{header.Characteristics}
+Section::Section(const details::pe_section &header) :
+    virtual_size_{header.VirtualSize},
+    pointer_to_relocations_{header.PointerToRelocations},
+    pointer_to_linenumbers_{header.PointerToLineNumbers},
+    number_of_relocations_{header.NumberOfRelocations},
+    number_of_linenumbers_{header.NumberOfLineNumbers},
+    characteristics_{header.Characteristics}
 {
-  name_            = std::string(header.Name, sizeof(header.Name));
-  virtual_address_ = header.VirtualAddress;
-  size_            = header.SizeOfRawData;
-  offset_          = header.PointerToRawData;
+    name_ = std::string(header.Name, sizeof(header.Name));
+    virtual_address_ = header.VirtualAddress;
+    size_ = header.SizeOfRawData;
+    offset_ = header.PointerToRawData;
 }
 
-Section::Section(const std::vector<uint8_t>& data, const std::string& name, uint32_t characteristics) :
-  Section::Section{}
+Section::Section(const std::vector<uint8_t> &data, const std::string &name, uint32_t characteristics) :
+    Section::Section{}
 {
-  characteristics_ = characteristics;
-  name_            = name;
-  size_            = data.size();
-  content_         = data;
+    characteristics_ = characteristics;
+    name_ = name;
+    size_ = data.size();
+    content_ = data;
 }
 
-Section::Section(const std::string& name) :
-  Section::Section{}
+Section::Section(const std::string &name) : Section::Section{}
 {
-  name_ = name;
+    name_ = name;
 }
 
-
-uint32_t Section::virtual_size() const {
-  return virtual_size_;
+uint32_t
+Section::virtual_size() const
+{
+    return virtual_size_;
 }
 
-uint32_t Section::sizeof_raw_data() const {
-  return size();
+uint32_t
+Section::sizeof_raw_data() const
+{
+    return size();
 }
 
-span<const uint8_t> Section::content() const {
-  return content_;
+span<const uint8_t>
+Section::content() const
+{
+    return content_;
 }
 
-
-uint32_t Section::pointerto_raw_data() const {
-  return offset();
+std::vector<uint8_t> &
+Section::content()
+{
+    return content_;
 }
 
-
-uint32_t Section::pointerto_relocation() const {
-  return pointer_to_relocations_;
+uint32_t
+Section::pointerto_raw_data() const
+{
+    return offset();
 }
 
-
-uint32_t Section::pointerto_line_numbers() const {
-  return pointer_to_linenumbers_;
+uint32_t
+Section::pointerto_relocation() const
+{
+    return pointer_to_relocations_;
 }
 
-uint16_t Section::numberof_relocations() const {
-  return number_of_relocations_;
+uint32_t
+Section::pointerto_line_numbers() const
+{
+    return pointer_to_linenumbers_;
 }
 
-uint16_t Section::numberof_line_numbers() const {
-  return number_of_linenumbers_;
+uint16_t
+Section::numberof_relocations() const
+{
+    return number_of_relocations_;
 }
 
-uint32_t Section::characteristics() const {
-  return characteristics_;
+uint16_t
+Section::numberof_line_numbers() const
+{
+    return number_of_linenumbers_;
 }
 
-
-const std::set<PE_SECTION_TYPES>& Section::types() const {
-  return types_;
+uint32_t
+Section::characteristics() const
+{
+    return characteristics_;
 }
 
-
-bool Section::is_type(PE_SECTION_TYPES type) const {
-  return types_.count(type) != 0;
+const std::set<PE_SECTION_TYPES> &
+Section::types() const
+{
+    return types_;
 }
 
-
-void Section::name(const std::string& name) {
-  if (name.size() > details::STRUCT_SIZES::NameSize) {
-    LIEF_ERR("The max size of a section's name is {} vs {d}",
-             details::STRUCT_SIZES::NameSize, name.size());
-    return;
-  }
-  name_ = name;
+bool
+Section::is_type(PE_SECTION_TYPES type) const
+{
+    return types_.count(type) != 0;
 }
 
-bool Section::has_characteristic(SECTION_CHARACTERISTICS c) const {
-  return (characteristics_ & static_cast<uint32_t>(c)) > 0;
+void
+Section::name(const std::string &name)
+{
+    if (name.size() > details::STRUCT_SIZES::NameSize)
+    {
+        LIEF_ERR("The max size of a section's name is {} vs {d}", details::STRUCT_SIZES::NameSize, name.size());
+        return;
+    }
+    name_ = name;
 }
 
-std::set<SECTION_CHARACTERISTICS> Section::characteristics_list() const {
-  std::set<SECTION_CHARACTERISTICS> charac;
-  std::copy_if(
-      std::begin(details::section_characteristics_array), std::end(details::section_characteristics_array),
-      std::inserter(charac, std::begin(charac)),
-      [this] (SECTION_CHARACTERISTICS f) { return has_characteristic(f); });
-
-  return charac;
+bool
+Section::has_characteristic(SECTION_CHARACTERISTICS c) const
+{
+    return (characteristics_ & static_cast<uint32_t>(c)) > 0;
 }
 
+std::set<SECTION_CHARACTERISTICS>
+Section::characteristics_list() const
+{
+    std::set<SECTION_CHARACTERISTICS> charac;
+    std::copy_if(
+        std::begin(details::section_characteristics_array),
+        std::end(details::section_characteristics_array),
+        std::inserter(charac, std::begin(charac)),
+        [this](SECTION_CHARACTERISTICS f) { return has_characteristic(f); });
 
-
-void Section::content(const std::vector<uint8_t>& data) {
-  content_ = data;
+    return charac;
 }
 
-
-void Section::virtual_size(uint32_t virtualSize) {
-  virtual_size_ = virtualSize;
+void
+Section::content(const std::vector<uint8_t> &data)
+{
+    content_ = data;
 }
 
-
-void Section::pointerto_raw_data(uint32_t pointerToRawData) {
-  offset(pointerToRawData);
+void
+Section::virtual_size(uint32_t virtualSize)
+{
+    virtual_size_ = virtualSize;
 }
 
-
-void Section::pointerto_relocation(uint32_t pointerToRelocation) {
-  pointer_to_relocations_ = pointerToRelocation;
+void
+Section::pointerto_raw_data(uint32_t pointerToRawData)
+{
+    offset(pointerToRawData);
 }
 
-
-void Section::pointerto_line_numbers(uint32_t pointerToLineNumbers) {
-  pointer_to_linenumbers_ = pointerToLineNumbers;
+void
+Section::pointerto_relocation(uint32_t pointerToRelocation)
+{
+    pointer_to_relocations_ = pointerToRelocation;
 }
 
-
-void Section::numberof_relocations(uint16_t numberOfRelocations) {
-  number_of_relocations_ = numberOfRelocations;
+void
+Section::pointerto_line_numbers(uint32_t pointerToLineNumbers)
+{
+    pointer_to_linenumbers_ = pointerToLineNumbers;
 }
 
-
-void Section::numberof_line_numbers(uint16_t numberOfLineNumbers) {
-  number_of_linenumbers_ = numberOfLineNumbers;
+void
+Section::numberof_relocations(uint16_t numberOfRelocations)
+{
+    number_of_relocations_ = numberOfRelocations;
 }
 
-void Section::sizeof_raw_data(uint32_t sizeOfRawData) {
-  size(sizeOfRawData);
+void
+Section::numberof_line_numbers(uint16_t numberOfLineNumbers)
+{
+    number_of_linenumbers_ = numberOfLineNumbers;
 }
 
-
-void Section::type(PE_SECTION_TYPES type) {
-  types_ = {type};
+void
+Section::sizeof_raw_data(uint32_t sizeOfRawData)
+{
+    size(sizeOfRawData);
 }
 
-
-void Section::remove_type(PE_SECTION_TYPES type) {
-  types_.erase(type);
+void
+Section::type(PE_SECTION_TYPES type)
+{
+    types_ = {type};
 }
 
-
-void Section::add_type(PE_SECTION_TYPES type) {
-  types_.insert(type);
+void
+Section::remove_type(PE_SECTION_TYPES type)
+{
+    types_.erase(type);
 }
 
-
-void Section::characteristics(uint32_t characteristics) {
-  characteristics_ = characteristics;
+void
+Section::add_type(PE_SECTION_TYPES type)
+{
+    types_.insert(type);
 }
 
-
-void Section::remove_characteristic(SECTION_CHARACTERISTICS characteristic) {
-  characteristics_ &= ~ static_cast<uint32_t>(characteristic);
+void
+Section::characteristics(uint32_t characteristics)
+{
+    characteristics_ = characteristics;
 }
 
-
-void Section::add_characteristic(SECTION_CHARACTERISTICS characteristic) {
-  characteristics_ |= static_cast<uint32_t>(characteristic);
+void
+Section::remove_characteristic(SECTION_CHARACTERISTICS characteristic)
+{
+    characteristics_ &= ~static_cast<uint32_t>(characteristic);
 }
 
-void Section::accept(LIEF::Visitor& visitor) const {
-  visitor.visit(*this);
+void
+Section::add_characteristic(SECTION_CHARACTERISTICS characteristic)
+{
+    characteristics_ |= static_cast<uint32_t>(characteristic);
 }
 
-
-void Section::clear(uint8_t c) {
-  std::fill(std::begin(content_), std::end(content_), c);
+void
+Section::accept(LIEF::Visitor &visitor) const
+{
+    visitor.visit(*this);
 }
 
-bool Section::operator==(const Section& rhs) const {
-  if (this == &rhs) {
-    return true;
-  }
-  size_t hash_lhs = Hash::hash(*this);
-  size_t hash_rhs = Hash::hash(rhs);
-  return hash_lhs == hash_rhs;
+void
+Section::clear(uint8_t c)
+{
+    std::fill(std::begin(content_), std::end(content_), c);
 }
 
-bool Section::operator!=(const Section& rhs) const {
-  return !(*this == rhs);
+bool
+Section::operator==(const Section &rhs) const
+{
+    if (this == &rhs)
+    {
+        return true;
+    }
+    size_t hash_lhs = Hash::hash(*this);
+    size_t hash_rhs = Hash::hash(rhs);
+    return hash_lhs == hash_rhs;
 }
 
-
-std::ostream& operator<<(std::ostream& os, const Section& section) {
-  const auto& chara = section.characteristics_list();
-
-  std::string chara_str = std::accumulate(
-     std::begin(chara), std::end(chara), std::string{},
-     [] (const std::string& a, SECTION_CHARACTERISTICS b) {
-         return a.empty() ?
-         to_string(b) :
-         a + " - " + to_string(b);
-     });
-  os << std::hex;
-  os << std::left
-     << std::setw(10) << section.name()
-     << std::setw(10) << section.virtual_size()
-     << std::setw(10) << section.virtual_address()
-     << std::setw(10) << section.size()
-     << std::setw(10) << section.offset()
-     << std::setw(10) << section.pointerto_relocation()
-     << std::setw(10) << section.entropy()
-     << std::setw(10) << chara_str;
-
-  return os;
+bool
+Section::operator!=(const Section &rhs) const
+{
+    return !(*this == rhs);
 }
 
+std::ostream &
+operator<<(std::ostream &os, const Section &section)
+{
+    const auto &chara = section.characteristics_list();
+
+    std::string chara_str = std::accumulate(
+        std::begin(chara), std::end(chara), std::string{}, [](const std::string &a, SECTION_CHARACTERISTICS b) {
+            return a.empty() ? to_string(b) : a + " - " + to_string(b);
+        });
+    os << std::hex;
+    os << std::left << std::setw(10) << section.name() << std::setw(10) << section.virtual_size() << std::setw(10)
+       << section.virtual_address() << std::setw(10) << section.size() << std::setw(10) << section.offset()
+       << std::setw(10) << section.pointerto_relocation() << std::setw(10) << section.entropy() << std::setw(10)
+       << chara_str;
+
+    return os;
 }
-}
+
+} // namespace PE
+} // namespace LIEF
