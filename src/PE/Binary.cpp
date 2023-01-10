@@ -516,6 +516,29 @@ Binary::get_section(const std::string &name) const
     return section_it->get();
 }
 
+Section *
+Binary::get_section(const uint64_t Address)
+{
+    return const_cast<Section *>(static_cast<const Binary *>(this)->get_section(Address));
+}
+
+const Section *
+Binary::get_section(const uint64_t Address) const
+{
+    const auto section_it =
+        std::find_if(std::begin(sections_), std::end(sections_), [&](const std::unique_ptr<Section> &section) {
+            auto begin = this->imagebase() + section->virtual_address();
+            auto end = begin + section->sizeof_raw_data();
+            return Address >= begin && Address < end;
+        });
+
+    if (section_it == std::end(sections_))
+    {
+        return nullptr;
+    }
+    return section_it->get();
+}
+
 const Section *
 Binary::import_section() const
 {

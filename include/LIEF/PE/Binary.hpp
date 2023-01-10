@@ -312,6 +312,13 @@ public:
     Section *get_section(const std::string &name);
     const Section *get_section(const std::string &name) const;
 
+	//! Return binary's section from its address.
+    //! If the secion can't be found, return a nullptr
+    //!
+    //! @param[in] Address Address of the Section
+    Section *get_section(const uint64_t Address);
+    const Section *get_section(const uint64_t Address) const;
+	
     //! Return the section associated with import table or a
     //! nullptr if the binary does not have an import table
     const Section *import_section() const;
