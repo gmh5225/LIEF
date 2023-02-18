@@ -46,6 +46,7 @@ set(LIEF_PE_SRC
   "${CMAKE_CURRENT_LIST_DIR}/resources/ResourceVersion.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/resources/ResourceVersion.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/utils.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/WinException.cpp"
 )
 
 set(LIEF_PE_LOAD_CONFIGURATION_SRC
@@ -113,6 +114,7 @@ set(LIEF_PE_INCLUDE_FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/include/LIEF/PE/enums.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/LIEF/PE/undef.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/LIEF/PE/utils.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/LIEF/PE/WinException.hpp"
   "${CMAKE_CURRENT_LIST_DIR}/Structures.hpp"
   "${CMAKE_CURRENT_LIST_DIR}/ResourcesParser.hpp"
 )
