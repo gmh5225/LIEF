@@ -1,0 +1,4 @@
+#ifndef LIEF_PE_WIN_EXCEPTION_H_
+#define LIEF_PE_WIN_EXCEPTION_H_
+
+#endif
